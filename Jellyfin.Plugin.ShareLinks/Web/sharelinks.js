@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'Create guest link';
-    var clientVersion = '1.0.0-ui-modal-6';
+    var clientVersion = '1.0.0-ui-modal-7';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -14,6 +14,8 @@
     var scanQueued = false;
     var bootRetry = null;
     var observer = null;
+    var lastContextItemId = null;
+    var lastContextItemTs = 0;
     var historyPatched = false;
     var durationOptions = [
         { label: '1 hour', hours: 1 },
@@ -61,6 +63,19 @@
 
         window.addEventListener('hashchange', scheduleWork, true);
         window.addEventListener('popstate', scheduleWork, true);
+
+        document.addEventListener('pointerdown', function (event) {
+            var node = event.target;
+            while (node && node !== document) {
+                var id = readItemIdFromNode(node);
+                if (id) {
+                    lastContextItemId = id;
+                    lastContextItemTs = Date.now();
+                    return;
+                }
+                node = node.parentElement;
+            }
+        }, true);
 
         observer = new MutationObserver(scheduleWork);
         observer.observe(document.body, { childList: true, subtree: true });
@@ -162,7 +177,7 @@
         // UX-only lockdown: the guest user's real access boundary is still the
         // server-side policy and item tags. This just keeps the web client out
         // of the user's way.
-        if (context.allowedItemId && !isAllowedLocation()) {
+        if (context.allowedItemId && !isAllowedLocation(context.allowedItemId)) {
             navigateToItem(context.allowedItemId);
         }
     }
@@ -211,7 +226,11 @@
 
         var style = document.createElement('style');
         style.id = 'ShareLinksGuestStyle';
-        style.textContent = 'body.' + guestClassName + ' [' + hiddenAttr + '="1"] { display: none !important; }';
+        style.textContent = 'body.' + guestClassName + ' [' + hiddenAttr + '="1"],'
+            + ' body.' + guestClassName + ' .headerBackButton,'
+            + ' body.' + guestClassName + ' .headerHomeButton,'
+            + ' body.' + guestClassName + ' .mainDrawerButton,'
+            + ' body.' + guestClassName + ' .headerSearchButton { display: none !important; }';
         document.head.appendChild(style);
     }
 
@@ -425,6 +444,10 @@
             current = current.parentElement;
         }
 
+        if (lastContextItemId && (Date.now() - lastContextItemTs) < 8000) {
+            return lastContextItemId;
+        }
+
         return findItemIdInDocument();
     }
 
@@ -505,8 +528,16 @@
         return /#\/(?:details|video|playback|list|item)/i.test(location.hash || '');
     }
 
-    function isAllowedLocation() {
-        return isDetailsOrPlaybackRoute();
+    function isAllowedLocation(allowedItemId) {
+        var hash = location.hash || '';
+        if (/#\/(?:video|playback)/i.test(hash)) {
+            return true;
+        }
+        if (/#\/(?:details|item)/i.test(hash)) {
+            var id = parseItemIdFromUrl();
+            return !!id && !!allowedItemId && id.toLowerCase() === String(allowedItemId).toLowerCase();
+        }
+        return false;
     }
 
     function navigateToItem(itemId) {
