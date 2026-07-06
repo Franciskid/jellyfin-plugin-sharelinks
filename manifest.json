@@ -1,0 +1,21 @@
+[
+    {
+        "guid": "68540b76-ee74-436d-85ff-2abc884bbea6",
+        "name": "ShareLinks",
+        "description": "Adds secure, expiring guest-share links for Jellyfin items using temporary hidden users, one-use token redemption, restrictive policies, and scheduled cleanup.",
+        "overview": "Temporary guest links for Jellyfin movies and episodes.",
+        "owner": "Franciskid",
+        "category": "General",
+        "imageUrl": "",
+        "versions": [
+            {
+                "version": "1.0.0.0",
+                "changelog": "Initial hybrid ShareLinks build with admin web menu integration, token redemption, temporary guest users, and cleanup.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "",
+                "checksum": "",
+                "timestamp": "2026-07-06T00:00:00Z"
+            }
+        ]
+    }
+]

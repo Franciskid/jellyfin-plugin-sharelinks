@@ -1,0 +1,19 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jellyfin.Plugin.ShareLinks", "Jellyfin.Plugin.ShareLinks\Jellyfin.Plugin.ShareLinks.csproj", "{03D33F07-50D3-4CE8-876F-63638614B25C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{03D33F07-50D3-4CE8-876F-63638614B25C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{03D33F07-50D3-4CE8-876F-63638614B25C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{03D33F07-50D3-4CE8-876F-63638614B25C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{03D33F07-50D3-4CE8-876F-63638614B25C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

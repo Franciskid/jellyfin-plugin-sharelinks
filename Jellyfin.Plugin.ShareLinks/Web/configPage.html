@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ShareLinks</title>
+    <style>
+        #ShareLinksConfigPage .sl-section {
+            margin-bottom: 1.25rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+        }
+
+        #ShareLinksConfigPage .sl-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.75rem 1rem;
+        }
+
+        #ShareLinksConfigPage .sl-field .fieldDescription {
+            margin-top: 0.25rem;
+        }
+
+        #ShareLinksConfigPage .sl-muted {
+            color: var(--theme-secondary-color, #666);
+        }
+
+        #ShareLinksConfigPage .sl-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        #ShareLinksConfigPage .sl-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        #ShareLinksConfigPage .sl-table th,
+        #ShareLinksConfigPage .sl-table td {
+            padding: 0.45rem 0.4rem;
+            border-bottom: 1px solid rgba(127, 127, 127, 0.14);
+            vertical-align: top;
+            text-align: left;
+            word-break: break-word;
+        }
+
+        #ShareLinksConfigPage .sl-table th {
+            font-size: 0.88rem;
+            font-weight: 600;
+        }
+
+        #ShareLinksConfigPage .sl-table .sl-right {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        #ShareLinksConfigPage .sl-inline {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        #ShareLinksConfigPage .sl-list-status {
+            min-height: 1.25rem;
+        }
+
+        @media (max-width: 900px) {
+            #ShareLinksConfigPage .sl-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="ShareLinksConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="ShareLinksConfigForm">
+                <div class="sl-section">
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">ShareLinks</h2>
+                    </div>
+                    <p class="fieldDescription">
+                        Creates short-lived guest links for movies and episodes, then keeps the active records visible for revocation.
+                    </p>
+                </div>
+
+                <div class="sl-section">
+                    <h3 class="sectionTitle">General</h3>
+                    <div class="sl-grid">
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="Enabled" />
+                                <span>Enable ShareLinks</span>
+                            </label>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="OneUseDefault" />
+                                <span>Default one-use links</span>
+                            </label>
+                        </div>
+
+                        <div class="sl-field inputContainer">
+                            <input is="emby-input" type="number" id="DefaultExpiryHours" label="Default expiry (hours)" min="1" max="8760" />
+                            <div class="fieldDescription">Used by the menu action when the admin accepts the default.</div>
+                        </div>
+
+                        <div class="sl-field inputContainer">
+                            <input is="emby-input" type="number" id="MaxExpiryHours" label="Maximum expiry (hours)" min="1" max="8760" />
+                        </div>
+
+                        <div class="sl-field inputContainer">
+                            <input is="emby-input" type="text" id="PublicBaseUrlOverride" label="Public base URL override" />
+                            <div class="fieldDescription">Leave empty to derive the public URL from the current request.</div>
+                        </div>
+
+                        <div class="sl-field inputContainer">
+                            <input is="emby-input" type="text" id="GuestUsernamePrefix" label="Guest username prefix" />
+                        </div>
+
+                        <div class="sl-field inputContainer">
+                            <input is="emby-input" type="number" id="CleanupIntervalMinutes" label="Cleanup interval (minutes)" min="5" max="10080" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sl-section">
+                    <h3 class="sectionTitle">Playback policy</h3>
+                    <div class="sl-grid">
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="AllowTranscoding" />
+                                <span>Allow transcoding</span>
+                            </label>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="AllowRemuxing" />
+                                <span>Allow remuxing</span>
+                            </label>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="GuestModeLockdownEnabled" />
+                                <span>Guest lockdown</span>
+                            </label>
+                            <div class="fieldDescription">Hides primary navigation for guest sessions in the web client. This is UX only, not the security boundary.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sl-section">
+                    <div class="sl-inline">
+                        <h3 class="sectionTitle">Share links</h3>
+                        <button is="emby-button" type="button" id="RefreshLinks" class="raised">
+                            <span>Refresh</span>
+                        </button>
+                        <span id="LinksStatus" class="sl-muted sl-list-status">Loading…</span>
+                    </div>
+                    <div style="overflow-x:auto; margin-top:0.5rem;">
+                        <table class="sl-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 9rem;">Status</th>
+                                    <th>Item</th>
+                                    <th style="width: 11rem;">Guest</th>
+                                    <th style="width: 11rem;">Expires</th>
+                                    <th style="width: 9rem;" class="sl-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="LinksBody">
+                                <tr>
+                                    <td colspan="5" class="sl-muted">No links loaded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block">
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var ShareLinksPluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
+            var page;
+
+            function loadConfig() {
+                Dashboard.showLoadingMsg();
+                return ApiClient.getPluginConfiguration(ShareLinksPluginId).then(function (cfg) {
+                    page.querySelector('#Enabled').checked = cfg.Enabled !== false;
+                    page.querySelector('#DefaultExpiryHours').value = cfg.DefaultExpiryHours || 24;
+                    page.querySelector('#MaxExpiryHours').value = cfg.MaxExpiryHours || 720;
+                    page.querySelector('#PublicBaseUrlOverride').value = cfg.PublicBaseUrlOverride || '';
+                    page.querySelector('#GuestUsernamePrefix').value = cfg.GuestUsernamePrefix || 'share-';
+                    page.querySelector('#AllowTranscoding').checked = cfg.AllowTranscoding !== false;
+                    page.querySelector('#AllowRemuxing').checked = cfg.AllowRemuxing !== false;
+                    page.querySelector('#CleanupIntervalMinutes').value = cfg.CleanupIntervalMinutes || 60;
+                    page.querySelector('#OneUseDefault').checked = cfg.OneUseDefault !== false;
+                    page.querySelector('#GuestModeLockdownEnabled').checked = cfg.GuestModeLockdownEnabled !== false;
+                }).finally(function () {
+                    Dashboard.hideLoadingMsg();
+                });
+            }
+
+            function fmtDate(value) {
+                if (!value) { return 'n/a'; }
+                return new Date(value).toLocaleString();
+            }
+
+            function escapeHtml(value) {
+                return String(value || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function renderLinks(list) {
+                var body = page.querySelector('#LinksBody');
+                var items = Array.isArray(list) ? list.slice().sort(function (a, b) {
+                    return new Date(b.CreatedAtUtc || b.CreatedAt || 0) - new Date(a.CreatedAtUtc || a.CreatedAt || 0);
+                }) : [];
+
+                if (!items.length) {
+                    body.innerHTML = '<tr><td colspan="5" class="sl-muted">No active links.</td></tr>';
+                    page.querySelector('#LinksStatus').textContent = 'No share links.';
+                    return;
+                }
+
+                body.innerHTML = items.map(function (record) {
+                    var status = record.Status || 'Unknown';
+                    var itemName = escapeHtml(record.ItemNameSnapshot || record.ItemId || '');
+                    var guestName = escapeHtml(record.GuestUserName || 'n/a');
+                    var expires = fmtDate(record.ExpiresAtUtc || record.ExpiresAt);
+                    return [
+                        '<tr>',
+                        '<td>', escapeHtml(status), '</td>',
+                        '<td>',
+                        '<div><strong>', itemName, '</strong></div>',
+                        '<div class="sl-muted">', escapeHtml(record.ItemId || ''), '</div>',
+                        '</td>',
+                        '<td>', guestName, '</td>',
+                        '<td>', escapeHtml(expires), '</td>',
+                        '<td class="sl-right">',
+                        '<button is="emby-button" type="button" class="raised" data-id="', escapeHtml(record.Id), '">',
+                        '<span>Revoke</span>',
+                        '</button>',
+                        '</td>',
+                        '</tr>'
+                    ].join('');
+                }).join('');
+
+                Array.from(body.querySelectorAll('button[data-id]')).forEach(function (button) {
+                    button.addEventListener('click', function () {
+                        revokeLink(button.getAttribute('data-id'));
+                    });
+                });
+
+                page.querySelector('#LinksStatus').textContent = items.length + ' link' + (items.length === 1 ? '' : 's') + ' loaded.';
+            }
+
+            function loadLinks() {
+                var status = page.querySelector('#LinksStatus');
+                status.textContent = 'Loading share links…';
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('ShareLinks/Admin/List'),
+                    dataType: 'json'
+                }).then(function (list) {
+                    renderLinks(list || []);
+                }).catch(function (error) {
+                    status.textContent = 'Could not load share links.';
+                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="5" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
+                });
+            }
+
+            function revokeLink(id) {
+                if (!id) {
+                    return;
+                }
+
+                var button = page.querySelector('button[data-id="' + id + '"]');
+                if (button && button.getAttribute('data-confirm') !== '1') {
+                    button.setAttribute('data-confirm', '1');
+                    button.querySelector('span').textContent = 'Confirm revoke';
+                    window.setTimeout(function () {
+                        if (button.isConnected && button.getAttribute('data-confirm') === '1') {
+                            button.removeAttribute('data-confirm');
+                            button.querySelector('span').textContent = 'Revoke';
+                        }
+                    }, 3500);
+                    return;
+                }
+
+                Dashboard.showLoadingMsg();
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('ShareLinks/Admin/Revoke/' + id),
+                    dataType: 'json'
+                }).then(function () {
+                    return loadLinks();
+                }).finally(function () {
+                    Dashboard.hideLoadingMsg();
+                });
+            }
+
+            function save(e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(ShareLinksPluginId).then(function (cfg) {
+                    cfg.Enabled = page.querySelector('#Enabled').checked;
+                    cfg.DefaultExpiryHours = parseInt(page.querySelector('#DefaultExpiryHours').value, 10) || 24;
+                    cfg.MaxExpiryHours = parseInt(page.querySelector('#MaxExpiryHours').value, 10) || 720;
+                    cfg.PublicBaseUrlOverride = page.querySelector('#PublicBaseUrlOverride').value.trim();
+                    cfg.GuestUsernamePrefix = page.querySelector('#GuestUsernamePrefix').value.trim() || 'share-';
+                    cfg.AllowTranscoding = page.querySelector('#AllowTranscoding').checked;
+                    cfg.AllowRemuxing = page.querySelector('#AllowRemuxing').checked;
+                    cfg.CleanupIntervalMinutes = parseInt(page.querySelector('#CleanupIntervalMinutes').value, 10) || 60;
+                    cfg.OneUseDefault = page.querySelector('#OneUseDefault').checked;
+                    cfg.GuestModeLockdownEnabled = page.querySelector('#GuestModeLockdownEnabled').checked;
+                    ApiClient.updatePluginConfiguration(ShareLinksPluginId, cfg).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                        return loadLinks();
+                    }).finally(function () {
+                        Dashboard.hideLoadingMsg();
+                    });
+                });
+                return false;
+            }
+
+            document.querySelector('#ShareLinksConfigPage').addEventListener('pageshow', function () {
+                page = this;
+                loadConfig().then(loadLinks);
+            });
+
+            document.querySelector('#ShareLinksConfigForm').addEventListener('submit', save);
+            document.querySelector('#RefreshLinks').addEventListener('click', function () {
+                loadLinks();
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>
