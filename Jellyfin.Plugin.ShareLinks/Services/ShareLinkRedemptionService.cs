@@ -45,6 +45,11 @@ public sealed class ShareLinkRedemptionService
     public async Task<string?> RedeemAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
     {
         var tokenHash = await _tokenService.HashTokenAsync(rawToken, cancellationToken).ConfigureAwait(false);
+        if (tokenHash is null)
+        {
+            return null;
+        }
+
         var record = await _store.GetByTokenHashAsync(tokenHash, cancellationToken).ConfigureAwait(false);
         if (record is null)
         {
@@ -179,7 +184,7 @@ public sealed class ShareLinkRedemptionService
     {
         var pathBase = request.PathBase.Value ?? string.Empty;
         var authUrl = $"{pathBase}/Users/AuthenticateByName";
-        var redirectUrl = $"{pathBase}/web/index.html#!/details?id={Uri.EscapeDataString(itemId.ToString("D"))}";
+        var redirectUrl = $"{pathBase}/web/index.html#/details?id={Uri.EscapeDataString(itemId.ToString("D"))}";
         var username = record.GuestUserName ?? JellyfinGuestUserService.BuildGuestUsername(record);
         var deviceId = record.DeviceId ?? string.Empty;
 
@@ -193,6 +198,8 @@ public sealed class ShareLinkRedemptionService
         var redirectUrlJson = JsonSerializer.Serialize(redirectUrl);
         var usernameJson = JsonSerializer.Serialize(username);
         var deviceIdJson = JsonSerializer.Serialize(deviceId);
+        var infoUrlJson = JsonSerializer.Serialize($"{pathBase}/System/Info/Public");
+        var pathBaseJson = JsonSerializer.Serialize(pathBase);
 
         return $$"""
 <!doctype html>
@@ -229,7 +236,7 @@ public sealed class ShareLinkRedemptionService
       "Accept": "application/json",
       "X-Emby-Authorization": `MediaBrowser Client="ShareLinks", Device="ShareLinks", DeviceId="${deviceId}", Version="1.0.0"`
     },
-    body: {{authJson}}
+    body: JSON.stringify({{authJson}})
   });
 
   if (!response.ok) {
@@ -239,24 +246,35 @@ public sealed class ShareLinkRedemptionService
   const auth = await response.json();
   const accessToken = auth.AccessToken ?? auth.accessToken ?? "";
   const userId = auth.User?.Id ?? auth.user?.Id ?? auth.UserId ?? auth.userId ?? "";
-  const userName = auth.User?.Name ?? auth.user?.Name ?? auth.UserName ?? auth.userName ?? username;
-  const snapshot = {
-    AccessToken: accessToken,
-    UserId: userId,
-    UserName: userName,
-    ServerUrl: window.location.origin
+
+  const info = await fetch({{infoUrlJson}}, {
+    credentials: "same-origin",
+    headers: { "Accept": "application/json" }
+  }).then((r) => r.json());
+
+  const serverAddress = window.location.origin + {{pathBaseJson}};
+  const credentials = {
+    Servers: [
+      {
+        ManualAddress: serverAddress,
+        manualAddressOnly: true,
+        Name: info.ServerName || "Jellyfin",
+        Id: info.Id,
+        LastConnectionMode: 1,
+        AccessToken: accessToken,
+        UserId: userId,
+        DateLastAccessed: Date.now()
+      }
+    ]
   };
 
   try {
-    for (const key of ["jellyfinCredentials", "jellyfin_credentials", "jellyfin-credentials"]) {
-      localStorage.setItem(key, JSON.stringify(snapshot));
-    }
-    localStorage.setItem("jellyfin.server", window.location.origin);
+    localStorage.setItem("jellyfin_credentials", JSON.stringify(credentials));
   } catch (_) {
-    // Best effort only. Jellyfin Web storage format should be verified live.
+    // If storage is blocked the redirect lands on the login screen.
   }
 
-  window.location.replace(redirectUrl);
+  window.location.replace(redirectUrl + "&serverId=" + encodeURIComponent(info.Id));
 })().catch((error) => {
   console.error(error);
   document.getElementById("status").textContent = "Sign-in failed.";

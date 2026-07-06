@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'Create guest link';
-    var clientVersion = '1.0.0-ui-modal-3';
+    var clientVersion = '1.0.0-ui-modal-6';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -257,6 +257,10 @@
         return String(value || '').replace(/\s+/g, ' ').trim();
     }
 
+    function isItemGuid(value) {
+        return /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(String(value || '').trim());
+    }
+
     async function scanForMoreMenuActions() {
         var user = await getCurrentUser();
         if (!isAdministrator(user)) {
@@ -430,7 +434,10 @@
             var text = sources[i];
             var match = text.match(/[?&](?:id|itemId)=([^&#]+)/i);
             if (match && match[1]) {
-                return decodeURIComponent(match[1]);
+                var decoded = decodeURIComponent(match[1]);
+                if (isItemGuid(decoded)) {
+                    return decoded;
+                }
             }
         }
 
@@ -464,7 +471,19 @@
             return null;
         }
 
-        return node.getAttribute('data-itemid') || node.getAttribute('data-id') || node.getAttribute('data-item-id') || null;
+        var candidates = [
+            node.getAttribute('data-itemid'),
+            node.getAttribute('data-id'),
+            node.getAttribute('data-item-id')
+        ];
+
+        for (var i = 0; i < candidates.length; i += 1) {
+            if (isItemGuid(candidates[i])) {
+                return candidates[i];
+            }
+        }
+
+        return null;
     }
 
     function isAdministrator(user) {
@@ -483,7 +502,7 @@
     }
 
     function isDetailsOrPlaybackRoute() {
-        return /#!\/(?:details|playback|item)/i.test(location.hash || '');
+        return /#\/(?:details|video|playback|list|item)/i.test(location.hash || '');
     }
 
     function isAllowedLocation() {
@@ -491,13 +510,18 @@
     }
 
     function navigateToItem(itemId) {
-        var target = '#!/details?id=' + encodeURIComponent(itemId);
+        var target = '#/details?id=' + encodeURIComponent(itemId);
         if (location.hash !== target) {
             location.hash = target;
         }
     }
 
     async function createGuestLink(itemId) {
+        if (!isItemGuid(itemId)) {
+            notify('Could not determine which item to share. Open the item page and retry.');
+            return;
+        }
+
         try {
             var config = await getConfig();
             var user = await getCurrentUser();

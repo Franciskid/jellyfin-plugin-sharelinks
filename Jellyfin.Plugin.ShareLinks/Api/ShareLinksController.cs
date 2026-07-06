@@ -75,6 +75,8 @@ public sealed class ShareLinkAdminRecordDto
     public int CleanupAttempts { get; set; }
 
     public string? CleanupError { get; set; }
+
+    public string? ShareUrl { get; set; }
 }
 
 /// <summary>Guest session state returned to the web client.</summary>
@@ -166,11 +168,13 @@ public sealed class ShareLinksController : ControllerBase
 
         if (request is null || string.IsNullOrWhiteSpace(request.ItemId))
         {
+            _logger.LogWarning("ShareLinks: create rejected, missing itemId.");
             return BadRequest(new { error = "Missing itemId." });
         }
 
-        if (!Guid.TryParse(request.ItemId, out var itemId))
+        if (!Guid.TryParse(request.ItemId!.Trim(), out var itemId))
         {
+            _logger.LogWarning("ShareLinks: create rejected, itemId {ItemId} is not a GUID.", request.ItemId);
             return BadRequest(new { error = "Invalid itemId." });
         }
 
@@ -189,7 +193,14 @@ public sealed class ShareLinksController : ControllerBase
         var item = _libraryManager.GetItemById(itemId);
         if (item is null)
         {
+            _logger.LogWarning("ShareLinks: create rejected, item {ItemId} not found.", itemId);
             return NotFound(new { error = "Item not found." });
+        }
+
+        if (item.IsFolder)
+        {
+            _logger.LogWarning("ShareLinks: create rejected, item {ItemId} \"{ItemName}\" is a folder or library, not shareable media.", itemId, item.Name);
+            return BadRequest(new { error = "Only a movie or episode can be shared, not a folder or library. Open the title's page and try again." });
         }
 
         try
@@ -198,6 +209,8 @@ public sealed class ShareLinksController : ControllerBase
             var oneUse = request.OneUse ?? config.OneUseDefault;
             var creation = await _creationService.CreateAsync(item, creatorUserId, expiryHours, oneUse, cancellationToken).ConfigureAwait(false);
             var shareUrl = BuildShareUrl(Request, creation.RawToken);
+            creation.Record.ShareUrl = shareUrl;
+            await _store.UpdateAsync(creation.Record, cancellationToken).ConfigureAwait(false);
             return Ok(new ShareLinkCreateResponse
             {
                 ShareUrl = shareUrl,
@@ -329,7 +342,8 @@ public sealed class ShareLinksController : ControllerBase
             OneUse = record.OneUse,
             MetadataTouched = record.MetadataTouched,
             CleanupAttempts = record.CleanupAttempts,
-            CleanupError = record.CleanupError
+            CleanupError = record.CleanupError,
+            ShareUrl = record.ShareUrl
         };
     }
 

@@ -67,4 +67,7 @@ public sealed class ShareLinkRecord
 
     /// <summary>Gets or sets the last cleanup error, if any.</summary>
     public string? CleanupError { get; set; }
+
+    /// <summary>Gets or sets the share URL issued at creation, for admin display.</summary>
+    public string? ShareUrl { get; set; }
 }

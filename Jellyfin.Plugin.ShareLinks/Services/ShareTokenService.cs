@@ -44,16 +44,28 @@ public sealed class ShareTokenService
         };
     }
 
-    /// <summary>Computes the stored hash for a presented token.</summary>
-    public async Task<string> HashTokenAsync(string token, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Computes the stored hash for a presented token, or <see langword="null"/> if the token
+    /// is missing or not well-formed base64url (treated as "no match" rather than an error).
+    /// </summary>
+    public async Task<string?> HashTokenAsync(string token, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new ArgumentException("Token cannot be empty.", nameof(token));
+            return null;
+        }
+
+        byte[] tokenBytes;
+        try
+        {
+            tokenBytes = Base64UrlDecode(token);
+        }
+        catch (FormatException)
+        {
+            return null;
         }
 
         var secret = await GetSecretAsync(cancellationToken).ConfigureAwait(false);
-        var tokenBytes = Base64UrlDecode(token);
         return ComputeHash(secret, tokenBytes);
     }
 
@@ -65,21 +77,15 @@ public sealed class ShareTokenService
             return false;
         }
 
-        try
-        {
-            var actualHash = await HashTokenAsync(token, cancellationToken).ConfigureAwait(false);
-            return CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(actualHash),
-                Encoding.UTF8.GetBytes(expectedHash));
-        }
-        catch (ArgumentException)
+        var actualHash = await HashTokenAsync(token, cancellationToken).ConfigureAwait(false);
+        if (actualHash is null)
         {
             return false;
         }
-        catch (FormatException)
-        {
-            return false;
-        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(actualHash),
+            Encoding.UTF8.GetBytes(expectedHash));
     }
 
     /// <summary>Encrypts sensitive text using the shared plugin secret.</summary>

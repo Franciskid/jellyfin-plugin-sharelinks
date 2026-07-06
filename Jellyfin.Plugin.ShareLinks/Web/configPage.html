@@ -170,6 +170,7 @@
                                 <tr>
                                     <th style="width: 9rem;">Status</th>
                                     <th>Item</th>
+                                    <th style="width: 14rem;">Link</th>
                                     <th style="width: 11rem;">Guest</th>
                                     <th style="width: 11rem;">Expires</th>
                                     <th style="width: 9rem;" class="sl-right">Actions</th>
@@ -177,7 +178,7 @@
                             </thead>
                             <tbody id="LinksBody">
                                 <tr>
-                                    <td colspan="5" class="sl-muted">No links loaded yet.</td>
+                                    <td colspan="6" class="sl-muted">No links loaded yet.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -237,7 +238,7 @@
                 }) : [];
 
                 if (!items.length) {
-                    body.innerHTML = '<tr><td colspan="5" class="sl-muted">No active links.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="6" class="sl-muted">No active links.</td></tr>';
                     page.querySelector('#LinksStatus').textContent = 'No share links.';
                     return;
                 }
@@ -247,13 +248,18 @@
                     var itemName = escapeHtml(record.ItemNameSnapshot || record.ItemId || '');
                     var guestName = escapeHtml(record.GuestUserName || 'n/a');
                     var expires = fmtDate(record.ExpiresAtUtc || record.ExpiresAt);
+                    var shareUrl = record.ShareUrl ? escapeHtml(record.ShareUrl) : '';
+                    var linkCell = shareUrl
+                        ? '<button is="emby-button" type="button" class="raised" data-copy="' + shareUrl + '"><span>Copy</span></button> ' +
+                          '<a href="' + shareUrl + '" target="_blank" rel="noopener">Open</a>'
+                        : '<span class="sl-muted">n/a</span>';
                     return [
                         '<tr>',
                         '<td>', escapeHtml(status), '</td>',
                         '<td>',
                         '<div><strong>', itemName, '</strong></div>',
-                        '<div class="sl-muted">', escapeHtml(record.ItemId || ''), '</div>',
                         '</td>',
+                        '<td>', linkCell, '</td>',
                         '<td>', guestName, '</td>',
                         '<td>', escapeHtml(expires), '</td>',
                         '<td class="sl-right">',
@@ -271,6 +277,12 @@
                     });
                 });
 
+                Array.from(body.querySelectorAll('button[data-copy]')).forEach(function (button) {
+                    button.addEventListener('click', function () {
+                        copyShareUrl(button);
+                    });
+                });
+
                 page.querySelector('#LinksStatus').textContent = items.length + ' link' + (items.length === 1 ? '' : 's') + ' loaded.';
             }
 
@@ -285,8 +297,55 @@
                     renderLinks(list || []);
                 }).catch(function (error) {
                     status.textContent = 'Could not load share links.';
-                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="5" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
+                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="6" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
                 });
+            }
+
+            function copyShareUrl(button) {
+                var url = button.getAttribute('data-copy');
+                if (!url) {
+                    return;
+                }
+
+                copyText(url).then(function () {
+                    var span = button.querySelector('span');
+                    if (!span) {
+                        return;
+                    }
+                    span.textContent = 'Copied';
+                    window.setTimeout(function () {
+                        span.textContent = 'Copy';
+                    }, 2000);
+                });
+            }
+
+            function copyText(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    return navigator.clipboard.writeText(text).catch(function () {
+                        return fallbackCopyText(text);
+                    });
+                }
+
+                return fallbackCopyText(text);
+            }
+
+            function fallbackCopyText(text) {
+                var textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.setAttribute('readonly', 'readonly');
+                textarea.style.position = 'fixed';
+                textarea.style.top = '-1000px';
+                textarea.style.left = '-1000px';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                } catch (error) {
+                    // Best effort only.
+                }
+                textarea.remove();
+                return Promise.resolve();
             }
 
             function revokeLink(id) {
