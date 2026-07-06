@@ -41,4 +41,12 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Gets or sets a value indicating whether guest-mode lockdown is enabled.</summary>
     public bool GuestModeLockdownEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a comma-separated list of CSS selectors that are hidden from guest
+    /// sessions in the web client. Used to suppress other plugins' injected UI (search
+    /// bars, floating buttons) so a guest only sees the shared title. Defaults to the
+    /// AI Search plugin's elements.
+    /// </summary>
+    public string GuestHiddenSelectors { get; set; } = ".ais-fab,.ais-overlay,#ais-styles";
 }

@@ -91,6 +91,8 @@ public sealed class ShareLinkGuestStateDto
     public DateTimeOffset? ExpiresAtUtc { get; set; }
 
     public bool LockdownEnabled { get; set; }
+
+    public string? HiddenSelectors { get; set; }
 }
 
 /// <summary>ShareLinks API surface.</summary>
@@ -291,7 +293,8 @@ public sealed class ShareLinksController : ControllerBase
                     AllowedItemId = match.ItemId,
                     ShareId = match.Id,
                     ExpiresAtUtc = match.ExpiresAtUtc,
-                    LockdownEnabled = config.GuestModeLockdownEnabled
+                    LockdownEnabled = config.GuestModeLockdownEnabled,
+                    HiddenSelectors = config.GuestHiddenSelectors
                 });
             }
         }
@@ -299,7 +302,8 @@ public sealed class ShareLinksController : ControllerBase
         return Ok(new ShareLinkGuestStateDto
         {
             IsGuest = false,
-            LockdownEnabled = config.GuestModeLockdownEnabled
+            LockdownEnabled = config.GuestModeLockdownEnabled,
+            HiddenSelectors = config.GuestHiddenSelectors
         });
     }
 

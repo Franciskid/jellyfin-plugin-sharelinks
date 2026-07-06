@@ -123,6 +123,11 @@
                             <input is="emby-input" type="text" id="GuestUsernamePrefix" label="Guest username prefix" />
                         </div>
 
+                        <div class="sl-field inputContainer" style="grid-column: 1 / -1;">
+                            <input is="emby-input" type="text" id="GuestHiddenSelectors" label="Guest hidden selectors (CSS, comma-separated)" />
+                            <div class="fieldDescription">Elements hidden from guest sessions, e.g. other plugins' buttons. Default hides the AI Search UI.</div>
+                        </div>
+
                         <div class="sl-field inputContainer">
                             <input is="emby-input" type="number" id="CleanupIntervalMinutes" label="Cleanup interval (minutes)" min="5" max="10080" />
                         </div>
@@ -207,6 +212,7 @@
                     page.querySelector('#MaxExpiryHours').value = cfg.MaxExpiryHours || 720;
                     page.querySelector('#PublicBaseUrlOverride').value = cfg.PublicBaseUrlOverride || '';
                     page.querySelector('#GuestUsernamePrefix').value = cfg.GuestUsernamePrefix || 'share-';
+                    page.querySelector('#GuestHiddenSelectors').value = cfg.GuestHiddenSelectors != null ? cfg.GuestHiddenSelectors : '.ais-fab,.ais-overlay,#ais-styles';
                     page.querySelector('#AllowTranscoding').checked = cfg.AllowTranscoding !== false;
                     page.querySelector('#AllowRemuxing').checked = cfg.AllowRemuxing !== false;
                     page.querySelector('#CleanupIntervalMinutes').value = cfg.CleanupIntervalMinutes || 60;
@@ -387,6 +393,7 @@
                     cfg.MaxExpiryHours = parseInt(page.querySelector('#MaxExpiryHours').value, 10) || 720;
                     cfg.PublicBaseUrlOverride = page.querySelector('#PublicBaseUrlOverride').value.trim();
                     cfg.GuestUsernamePrefix = page.querySelector('#GuestUsernamePrefix').value.trim() || 'share-';
+                    cfg.GuestHiddenSelectors = page.querySelector('#GuestHiddenSelectors').value;
                     cfg.AllowTranscoding = page.querySelector('#AllowTranscoding').checked;
                     cfg.AllowRemuxing = page.querySelector('#AllowRemuxing').checked;
                     cfg.CleanupIntervalMinutes = parseInt(page.querySelector('#CleanupIntervalMinutes').value, 10) || 60;

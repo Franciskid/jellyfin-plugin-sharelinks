@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'Create guest link';
-    var clientVersion = '1.0.0-ui-modal-7';
+    var clientVersion = '1.0.0-ui-modal-8';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -172,6 +172,7 @@
         }
 
         ensureGuestStyle();
+        ensurePluginHideStyle(context.hiddenSelectors);
         hideGuestControls();
 
         // UX-only lockdown: the guest user's real access boundary is still the
@@ -202,7 +203,8 @@
             allowedItemId: extractAllowedItemId(state) || sessionStorage.getItem(allowedItemStorageKey) || null,
             username: username,
             prefix: prefix,
-            lockdownEnabled: lockdownEnabled
+            lockdownEnabled: lockdownEnabled,
+            hiddenSelectors: (state && (state.HiddenSelectors || state.hiddenSelectors)) || ''
         };
     }
 
@@ -227,10 +229,43 @@
         var style = document.createElement('style');
         style.id = 'ShareLinksGuestStyle';
         style.textContent = 'body.' + guestClassName + ' [' + hiddenAttr + '="1"],'
-            + ' body.' + guestClassName + ' .headerBackButton,'
             + ' body.' + guestClassName + ' .headerHomeButton,'
             + ' body.' + guestClassName + ' .mainDrawerButton,'
-            + ' body.' + guestClassName + ' .headerSearchButton { display: none !important; }';
+            + ' body.' + guestClassName + ' .headerSearchButton,'
+            + ' body.' + guestClassName + ' [data-action="addtoplaylist"],'
+            + ' body.' + guestClassName + ' [data-action="addtocollection"] { display: none !important; }'
+            + ' body.' + guestClassName + ' .card,'
+            + ' body.' + guestClassName + ' #castCollapsible a,'
+            + ' body.' + guestClassName + ' .detailsGroupItem a,'
+            + ' body.' + guestClassName + ' .genresGroup a,'
+            + ' body.' + guestClassName + ' .studiosGroup a,'
+            + ' body.' + guestClassName + ' .mediaInfoItem a { pointer-events: none !important; cursor: default !important; }';
+        document.head.appendChild(style);
+    }
+
+    function ensurePluginHideStyle(selectors) {
+        var value = String(selectors || '').split(',').map(function (part) {
+            return part.trim();
+        }).filter(Boolean);
+        var existing = document.getElementById('ShareLinksPluginHideStyle');
+        if (value.length === 0) {
+            if (existing) {
+                existing.remove();
+            }
+            return;
+        }
+
+        var css = value.join(', ') + ' { display: none !important; }';
+        if (existing) {
+            if (existing.textContent !== css) {
+                existing.textContent = css;
+            }
+            return;
+        }
+
+        var style = document.createElement('style');
+        style.id = 'ShareLinksPluginHideStyle';
+        style.textContent = css;
         document.head.appendChild(style);
     }
 
