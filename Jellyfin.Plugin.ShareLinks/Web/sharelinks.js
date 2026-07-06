@@ -1,8 +1,8 @@
 (function () {
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
-    var actionLabel = 'Create guest link';
-    var clientVersion = '1.0.0-ui-modal-8';
+    var actionLabel = 'ShareLink';
+    var clientVersion = '1.0.0-ui-modal-9';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -435,6 +435,13 @@
         injected.setAttribute('aria-label', actionLabel);
         injected.setAttribute('title', actionLabel);
         injected.dataset.sharelinksItemId = itemId;
+
+        var injectedIcon = injected.querySelector('.material-icons');
+        if (injectedIcon) {
+            injectedIcon.classList.remove('content_copy');
+            injectedIcon.classList.add('share');
+        }
+
         injected.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
