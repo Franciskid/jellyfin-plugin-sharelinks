@@ -84,6 +84,13 @@ up the link. So:
 6. the real access boundary is the server-side tag policy; the web-client
    lockdown is convenience on top of it
 
+The same applies to the guest's login. The plugin mints the guest session itself
+on the server, using Jellyfin's own session manager. No password is ever stored
+anywhere, not even encrypted, and no password ever appears in the page sent to
+the guest. The only thing the guest's browser receives is a session token
+scoped to that one guest account, and that token dies the moment the guest
+account is cleaned up.
+
 ## Configuration
 
 All of these live on the plugin's dashboard page:

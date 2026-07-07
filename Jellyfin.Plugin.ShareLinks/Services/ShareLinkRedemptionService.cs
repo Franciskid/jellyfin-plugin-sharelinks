@@ -4,8 +4,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ShareLinks.Models;
 using Jellyfin.Plugin.ShareLinks.Storage;
+using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -20,6 +22,7 @@ public sealed class ShareLinkRedemptionService
     private readonly ItemTagService _itemTagService;
     private readonly JellyfinGuestUserService _guestUserService;
     private readonly ShareLinkCleanupService _cleanupService;
+    private readonly ISessionManager _sessionManager;
     private readonly ILogger<ShareLinkRedemptionService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ShareLinkRedemptionService"/> class.</summary>
@@ -30,6 +33,7 @@ public sealed class ShareLinkRedemptionService
         ItemTagService itemTagService,
         JellyfinGuestUserService guestUserService,
         ShareLinkCleanupService cleanupService,
+        ISessionManager sessionManager,
         ILogger<ShareLinkRedemptionService> logger)
     {
         _libraryManager = libraryManager;
@@ -38,6 +42,7 @@ public sealed class ShareLinkRedemptionService
         _itemTagService = itemTagService;
         _guestUserService = guestUserService;
         _cleanupService = cleanupService;
+        _sessionManager = sessionManager;
         _logger = logger;
     }
 
@@ -101,17 +106,33 @@ public sealed class ShareLinkRedemptionService
         record.CleanupError = null;
         await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
 
-        var password = await GetOrCreatePasswordAsync(record, cancellationToken).ConfigureAwait(false);
+        // The account still needs a password so it can never be authenticated with a blank
+        // login; it is generated fresh on every redemption and is never stored or sent
+        // anywhere. The browser only ever receives a server-minted session token.
+        var password = JellyfinGuestUserService.GeneratePassword();
         if (string.IsNullOrWhiteSpace(record.GuestUserName))
         {
             record.GuestUserName = JellyfinGuestUserService.BuildGuestUsername(record);
         }
 
+        AuthenticationResult authResult;
         try
         {
             var user = await _guestUserService.EnsureGuestUserAsync(record, password, cancellationToken).ConfigureAwait(false);
             record.GuestUserId = user.Id;
             record.GuestUserName = user.Username;
+
+            authResult = await _sessionManager.AuthenticateDirect(new AuthenticationRequest
+            {
+                Username = record.GuestUserName,
+                UserId = record.GuestUserId.Value,
+                App = "ShareLinks",
+                AppVersion = "1.0.0",
+                DeviceId = record.DeviceId,
+                DeviceName = "ShareLinks",
+                RemoteEndPoint = request.HttpContext.Connection.RemoteIpAddress?.ToString()
+            }).ConfigureAwait(false);
+
             record.RedeemedAtUtc ??= now;
             record.Status = ShareLinkStatus.Redeemed;
             record.CleanupError = null;
@@ -127,29 +148,7 @@ public sealed class ShareLinkRedemptionService
             return null;
         }
 
-        return BuildBootstrapHtml(request, record, password, itemId);
-    }
-
-    private async Task<string> GetOrCreatePasswordAsync(ShareLinkRecord record, CancellationToken cancellationToken)
-    {
-        if (!string.IsNullOrWhiteSpace(record.GuestPasswordEncrypted))
-        {
-            try
-            {
-                return await _tokenService.UnprotectStringAsync(record.GuestPasswordEncrypted, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "ShareLinks: stored guest password could not be decrypted for record {RecordId}; generating a replacement.", record.Id);
-            }
-        }
-
-        var password = JellyfinGuestUserService.GeneratePassword();
-        record.GuestPasswordEncrypted = await _tokenService.ProtectStringAsync(password, cancellationToken).ConfigureAwait(false);
-        record.Status = ShareLinkStatus.Redeeming;
-        record.CleanupError = null;
-        await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
-        return password;
+        return BuildBootstrapHtml(request, authResult, itemId);
     }
 
     private async Task HandleTerminalRecordAsync(ShareLinkRecord record, ShareLinkStatus terminalStatus, string reason, CancellationToken cancellationToken)
@@ -180,24 +179,14 @@ public sealed class ShareLinkRedemptionService
         }
     }
 
-    private static string BuildBootstrapHtml(HttpRequest request, ShareLinkRecord record, string password, Guid itemId)
+    private static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, Guid itemId)
     {
         var pathBase = request.PathBase.Value ?? string.Empty;
-        var authUrl = $"{pathBase}/Users/AuthenticateByName";
         var redirectUrl = $"{pathBase}/web/index.html#/details?id={Uri.EscapeDataString(itemId.ToString("D"))}";
-        var username = record.GuestUserName ?? JellyfinGuestUserService.BuildGuestUsername(record);
-        var deviceId = record.DeviceId ?? string.Empty;
 
-        var authJson = JsonSerializer.Serialize(new
-        {
-            Username = username,
-            Pw = password
-        });
-
-        var authUrlJson = JsonSerializer.Serialize(authUrl);
+        var accessTokenJson = JsonSerializer.Serialize(authResult.AccessToken);
+        var userIdJson = JsonSerializer.Serialize(authResult.User.Id.ToString("N"));
         var redirectUrlJson = JsonSerializer.Serialize(redirectUrl);
-        var usernameJson = JsonSerializer.Serialize(username);
-        var deviceIdJson = JsonSerializer.Serialize(deviceId);
         var infoUrlJson = JsonSerializer.Serialize($"{pathBase}/System/Info/Public");
         var pathBaseJson = JsonSerializer.Serialize(pathBase);
 
@@ -221,31 +210,11 @@ public sealed class ShareLinkRedemptionService
 </main>
 <script>
 (async () => {
-  const authUrl = {{authUrlJson}};
   const redirectUrl = {{redirectUrlJson}};
-  const username = {{usernameJson}};
-  const deviceId = {{deviceIdJson}} || crypto.randomUUID().replace(/-/g, "");
+  const accessToken = {{accessTokenJson}};
+  const userId = {{userIdJson}};
 
-  document.getElementById("status").textContent = "Authenticating " + username + ".";
-
-  const response = await fetch(authUrl, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "X-Emby-Authorization": `MediaBrowser Client="ShareLinks", Device="ShareLinks", DeviceId="${deviceId}", Version="1.0.0"`
-    },
-    body: JSON.stringify({{authJson}})
-  });
-
-  if (!response.ok) {
-    throw new Error(`Authentication failed (${response.status})`);
-  }
-
-  const auth = await response.json();
-  const accessToken = auth.AccessToken ?? auth.accessToken ?? "";
-  const userId = auth.User?.Id ?? auth.user?.Id ?? auth.UserId ?? auth.userId ?? "";
+  document.getElementById("status").textContent = "Opening your title.";
 
   const info = await fetch({{infoUrlJson}}, {
     credentials: "same-origin",
