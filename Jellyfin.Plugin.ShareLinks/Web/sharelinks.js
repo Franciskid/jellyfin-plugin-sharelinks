@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.0-ui-modal-13';
+    var clientVersion = '1.0.0-ui-modal-14';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -17,6 +17,12 @@
     var lastContextItemId = null;
     var lastContextItemTs = 0;
     var historyPatched = false;
+    var itemMenuActionIds = [
+        'moreinfo', 'mediainfo', 'editmetadata', 'editimages', 'editsubtitles',
+        'editlyrics', 'identify', 'refreshmetadata', 'refresh', 'playlist',
+        'addtoplaylist', 'addtocollection', 'instantmix', 'shuffle', 'resume',
+        'copy-stream', 'copystream', 'share', 'download', 'delete'
+    ];
     var durationOptions = [
         { label: '1 hour', hours: 1 },
         { label: '2 hours', hours: 2 },
@@ -466,16 +472,23 @@
         insertActionAfter(template, itemId, true);
     }
 
+    function isItemMenuAction(node) {
+        if (!node || !node.getAttribute) {
+            return false;
+        }
+
+        var id = String(node.getAttribute('data-id') || '').toLowerCase();
+        if (id && itemMenuActionIds.indexOf(id) >= 0) {
+            return true;
+        }
+
+        return isCopyStreamUrlLabel(getVisibleLabel(node));
+    }
+
     function findOpenActionContainer() {
         var selectors = [
             '.actionSheet',
             '.actionsheet',
-            '.actionSheetContent',
-            '.dialog',
-            '.paperDialog',
-            '.mdl-dialog',
-            '.listItemBody',
-            '[role="dialog"]',
             '[role="menu"]'
         ];
 
@@ -497,13 +510,19 @@
             return false;
         }
 
-        var actions = Array.from(node.querySelectorAll('button, a, [role="menuitem"], [role="option"], .actionsheetMenuItem, .paperListButton'))
+        var items = Array.from(node.querySelectorAll('.actionSheetMenuItem, .actionsheetMenuItem'))
             .filter(isVisible);
-        return actions.length >= 2 && actions.length <= 40;
+        if (items.length < 2 || items.length > 40) {
+            return false;
+        }
+
+        return items.some(function (item) {
+            return isItemMenuAction(item);
+        });
     }
 
     function findBestActionTemplate(container) {
-        var actions = Array.from(container.querySelectorAll('button, a, [role="menuitem"], [role="option"], .actionsheetMenuItem, .paperListButton'))
+        var actions = Array.from(container.querySelectorAll('.actionSheetMenuItem, .actionsheetMenuItem'))
             .filter(isVisible);
         for (var i = 0; i < actions.length; i += 1) {
             if (isCopyStreamUrlLabel(getVisibleLabel(actions[i]))) {
