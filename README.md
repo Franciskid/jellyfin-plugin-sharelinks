@@ -21,6 +21,9 @@ real user or handing over a login that sees everything.
 
 ---
 
+<img width="1476" height="784" alt="image" src="https://github.com/user-attachments/assets/841f24f8-8b0f-4fd0-a8f8-890ff80faa2f" />
+
+
 ## How it works
 
 1. As an admin you open the context menu on a movie or episode and hit
@@ -120,3 +123,9 @@ the list.
 Developed by [Franciskid](https://github.com/Franciskid).
 
 Licensed under the [GPL-3.0](LICENSE), like most Jellyfin plugins.
+
+
+## Images
+
+<img width="590" height="427" alt="image" src="https://github.com/user-attachments/assets/1ae3c28a-644e-4c9f-824a-07b800aa5eff" />
+
