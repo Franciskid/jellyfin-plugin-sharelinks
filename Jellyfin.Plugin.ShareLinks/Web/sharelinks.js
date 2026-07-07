@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.0-ui-modal-10';
+    var clientVersion = '1.0.0-ui-modal-11';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -165,6 +165,34 @@
         return guestStatePromise;
     }
 
+    function hideBlockedGuestMenuItems() {
+        var nodes = document.querySelectorAll('.actionSheetMenuItem');
+        Array.prototype.forEach.call(nodes, function (node) {
+            if (!node || node.getAttribute('data-sharelinks-blocked') === '1') {
+                return;
+            }
+
+            var dataId = String(node.getAttribute('data-id') || '').toLowerCase();
+            var label = getVisibleLabel(node).toLowerCase();
+            var icon = node.querySelector('.material-icons');
+            var iconClass = icon ? String(icon.className || '') : '';
+
+            var blocked = dataId === 'playlist'
+                || dataId === 'addtoplaylist'
+                || dataId === 'addtocollection'
+                || label.indexOf('liste de lecture') >= 0
+                || label.indexOf('playlist') >= 0
+                || label.indexOf('add to collection') >= 0
+                || label.indexOf('ajouter à la collection') >= 0
+                || (iconClass.indexOf('playlist_add') >= 0 && dataId !== 'queue' && dataId !== 'queuenext');
+
+            if (blocked) {
+                node.setAttribute('data-sharelinks-blocked', '1');
+                node.style.setProperty('display', 'none', 'important');
+            }
+        });
+    }
+
     async function applyGuestLockdown() {
         var context = await getGuestContext();
         if (!context.locked) {
@@ -174,6 +202,7 @@
         ensureGuestStyle();
         ensurePluginHideStyle(context.hiddenSelectors);
         hideGuestControls();
+        hideBlockedGuestMenuItems();
 
         // UX-only lockdown: the guest user's real access boundary is still the
         // server-side policy and item tags. This just keeps the web client out
