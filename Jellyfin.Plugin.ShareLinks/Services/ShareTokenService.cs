@@ -88,61 +88,6 @@ public sealed class ShareTokenService
             Encoding.UTF8.GetBytes(expectedHash));
     }
 
-    /// <summary>Encrypts sensitive text using the shared plugin secret.</summary>
-    public async Task<string> ProtectStringAsync(string value, CancellationToken cancellationToken = default)
-    {
-        if (value is null)
-        {
-            throw new ArgumentNullException(nameof(value));
-        }
-
-        var secret = await GetSecretAsync(cancellationToken).ConfigureAwait(false);
-        var plaintext = Encoding.UTF8.GetBytes(value);
-        var nonce = new byte[12];
-        RandomNumberGenerator.Fill(nonce);
-        var cipher = new byte[plaintext.Length];
-        var tag = new byte[16];
-
-        using (var aes = new AesGcm(secret, 16))
-        {
-            aes.Encrypt(nonce, plaintext, cipher, tag);
-        }
-
-        var payload = new byte[nonce.Length + cipher.Length + tag.Length];
-        Buffer.BlockCopy(nonce, 0, payload, 0, nonce.Length);
-        Buffer.BlockCopy(cipher, 0, payload, nonce.Length, cipher.Length);
-        Buffer.BlockCopy(tag, 0, payload, nonce.Length + cipher.Length, tag.Length);
-        return Base64UrlEncode(payload);
-    }
-
-    /// <summary>Decrypts a sensitive string protected by <see cref="ProtectStringAsync"/>.</summary>
-    public async Task<string> UnprotectStringAsync(string protectedValue, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(protectedValue))
-        {
-            throw new ArgumentException("Protected value cannot be empty.", nameof(protectedValue));
-        }
-
-        var payload = Base64UrlDecode(protectedValue);
-        if (payload.Length < 12 + 16)
-        {
-            throw new CryptographicException("Protected payload is invalid.");
-        }
-
-        var secret = await GetSecretAsync(cancellationToken).ConfigureAwait(false);
-        var nonce = payload[..12];
-        var tag = payload[^16..];
-        var cipher = payload[12..^16];
-        var plaintext = new byte[cipher.Length];
-
-        using (var aes = new AesGcm(secret, 16))
-        {
-            aes.Decrypt(nonce, cipher, tag, plaintext);
-        }
-
-        return Encoding.UTF8.GetString(plaintext);
-    }
-
     private async Task<byte[]> GetSecretAsync(CancellationToken cancellationToken)
     {
         if (_secretKey is not null)

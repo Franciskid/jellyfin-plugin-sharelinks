@@ -8,7 +8,8 @@ using MediaBrowser.Model.Tasks;
 namespace Jellyfin.Plugin.ShareLinks.Tasks;
 
 /// <summary>
-/// Scheduled cleanup shell for later link-expiry and guest-account teardown work.
+/// Scheduled task that expires share links past their <c>ExpiresAtUtc</c> and tears down
+/// the associated guest users and tags.
 /// </summary>
 public sealed class CleanupShareLinksScheduledTask : IScheduledTask, IConfigurableScheduledTask
 {
@@ -27,7 +28,7 @@ public sealed class CleanupShareLinksScheduledTask : IScheduledTask, IConfigurab
     public string Key => "ShareLinksCleanup";
 
     /// <inheritdoc />
-    public string Description => "Removes expired share links and performs future guest-account cleanup.";
+    public string Description => "Expires share links past their expiry time and removes their guest users and tags.";
 
     /// <inheritdoc />
     public string Category => "ShareLinks";
@@ -53,8 +54,8 @@ public sealed class CleanupShareLinksScheduledTask : IScheduledTask, IConfigurab
     {
         yield return new TaskTriggerInfo
         {
-            Type = TaskTriggerInfoType.DailyTrigger,
-            TimeOfDayTicks = TimeSpan.FromHours(4).Ticks,
+            Type = TaskTriggerInfoType.IntervalTrigger,
+            IntervalTicks = TimeSpan.FromMinutes(30).Ticks,
         };
     }
 }
