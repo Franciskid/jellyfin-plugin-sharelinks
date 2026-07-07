@@ -45,9 +45,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Gets or sets a comma-separated list of CSS selectors that are hidden from guest
     /// sessions in the web client. Used to suppress other plugins' injected UI (search
-    /// bars, floating buttons) so a guest only sees the shared title. The default value
-    /// hides the elements of a plugin that injects its own floating button and panel
-    /// into the web client; edit or clear it to match whatever else you run.
+    /// bars, floating buttons) so a guest only sees the shared title. Empty by default.
     /// </summary>
-    public string GuestHiddenSelectors { get; set; } = ".ais-fab,.ais-overlay,#ais-styles";
+    public string GuestHiddenSelectors { get; set; } = string.Empty;
 }

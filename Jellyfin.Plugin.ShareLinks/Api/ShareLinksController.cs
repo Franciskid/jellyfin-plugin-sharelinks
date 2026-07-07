@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ShareLinks.Configuration;
@@ -13,6 +14,7 @@ using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -315,16 +317,61 @@ public sealed class ShareLinksController : ControllerBase
         SetNoStoreHeaders();
         if (string.IsNullOrWhiteSpace(token))
         {
-            return NotFound();
+            return LinkUnavailablePage(Request);
         }
 
         var html = await _redemptionService.RedeemAsync(token, Request, cancellationToken).ConfigureAwait(false);
         if (html is null)
         {
-            return NotFound();
+            return LinkUnavailablePage(Request);
         }
 
         return Content(html, "text/html; charset=utf-8");
+    }
+
+    private static ContentResult LinkUnavailablePage(HttpRequest request)
+    {
+        var pathBase = request.PathBase.Value ?? string.Empty;
+        var redirectUrl = $"{pathBase}/web/";
+
+        var redirectUrlJson = JsonSerializer.Serialize(redirectUrl);
+        var redirectUrlHtml = System.Net.WebUtility.HtmlEncode(redirectUrl);
+
+        var html = $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="6;url={{redirectUrlHtml}}">
+  <title>Link unavailable</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111827; color: #e5e7eb; }
+    main { max-width: 36rem; padding: 2rem; }
+    .muted { color: #9ca3af; }
+    a { color: #60a5fa; }
+  </style>
+</head>
+<body>
+<main>
+  <div>This share link is no longer valid.</div>
+  <div class="muted">Ce lien de partage n'est plus valide.</div>
+  <div class="muted">Taking you to the home page...</div>
+  <p><a href="{{redirectUrlHtml}}">Open Jellyfin</a></p>
+</main>
+<script>
+setTimeout(function () { window.location.replace({{redirectUrlJson}}); }, 4000);
+</script>
+</body>
+</html>
+""";
+
+        return new ContentResult
+        {
+            StatusCode = StatusCodes.Status404NotFound,
+            ContentType = "text/html; charset=utf-8",
+            Content = html
+        };
     }
 
     private static ShareLinkAdminRecordDto ToDto(ShareLinkRecord record)
