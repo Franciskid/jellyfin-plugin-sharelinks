@@ -65,7 +65,7 @@ public sealed class ShareLinkCreationService
         {
             if (!string.IsNullOrWhiteSpace(record.AllowedTag))
             {
-                record.MetadataTouched = await _itemTagService.EnsureTagAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
+                record.MetadataTouched = await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
             }
 
             record.Status = ShareLinkStatus.Active;

@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.0-ui-modal-14';
+    var clientVersion = '1.0.1-ui-1';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -21,7 +21,8 @@
         'moreinfo', 'mediainfo', 'editmetadata', 'editimages', 'editsubtitles',
         'editlyrics', 'identify', 'refreshmetadata', 'refresh', 'playlist',
         'addtoplaylist', 'addtocollection', 'instantmix', 'shuffle', 'resume',
-        'copy-stream', 'copystream', 'share', 'download', 'delete'
+        'copy-stream', 'copystream', 'share', 'download', 'delete',
+        'edit'
     ];
     var durationOptions = [
         { label: '1 hour', hours: 1 },
@@ -282,10 +283,20 @@
 
         // UX-only lockdown: the guest user's real access boundary is still the
         // server-side policy and item tags. This just keeps the web client out
-        // of the user's way.
-        if (context.allowedItemId && !isAllowedLocation(context.allowedItemId)) {
+        // of the user's way, while still letting the guest browse into the
+        // shared tree (series -> season -> episode) when the server says the
+        // item is visible to them.
+        if (!context.allowedItemId) {
+            return;
+        }
+
+        var verdict = await checkAllowedLocation(context.allowedItemId);
+        if (verdict === false) {
             navigateToItem(context.allowedItemId);
         }
+        // verdict === true: allowed, do nothing.
+        // verdict === null: check still in flight or route is not item-scoped
+        // in a way we can verify yet; do nothing to avoid flicker.
     }
 
     async function getGuestContext() {
@@ -695,16 +706,112 @@
         return /#\/(?:details|video|playback|list|item)/i.test(location.hash || '');
     }
 
-    function isAllowedLocation(allowedItemId) {
+    var itemVisibilityCache = {};
+    var itemVisibilityInFlight = {};
+
+    function parseCandidateIdsFromUrl() {
+        var sources = [location.hash, location.search, location.href];
+        var keys = ['id', 'seriesId', 'parentId', 'topParentId'];
+        var found = [];
+
+        for (var k = 0; k < keys.length; k += 1) {
+            var pattern = new RegExp('[?&]' + keys[k] + '=([^&#]+)', 'i');
+            for (var i = 0; i < sources.length; i += 1) {
+                var text = sources[i];
+                var match = text.match(pattern);
+                if (match && match[1]) {
+                    var decoded = decodeURIComponent(match[1]);
+                    if (isItemGuid(decoded) && found.indexOf(decoded) < 0) {
+                        found.push(decoded);
+                    }
+                    break;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /**
+     * Returns true/false when the verdict for the current location is already
+     * known, or null while it is still being resolved (or the route is not one
+     * we verify). A true/false verdict for a given id is cached so the mutation
+     * observer re-running this on every DOM tick does not spam the API.
+     */
+    function checkAllowedLocation(allowedItemId) {
         var hash = location.hash || '';
         if (/#\/(?:video|playback)/i.test(hash)) {
             return true;
         }
-        if (/#\/(?:details|item)/i.test(hash)) {
-            var id = parseItemIdFromUrl();
-            return !!id && !!allowedItemId && id.toLowerCase() === String(allowedItemId).toLowerCase();
+
+        if (!/#\/(?:details|item|list)/i.test(hash)) {
+            return false;
         }
-        return false;
+
+        var candidates = parseCandidateIdsFromUrl();
+        var normalizedAllowed = String(allowedItemId || '').toLowerCase();
+
+        if (candidates.length === 0) {
+            // Details/list route we could not extract an id from: fall back to
+            // the strict same-item check rather than guessing.
+            return false;
+        }
+
+        if (candidates.some(function (id) { return id.toLowerCase() === normalizedAllowed; })) {
+            return true;
+        }
+
+        // None of the candidate ids is the shared item itself. Ask the server
+        // whether the current user (the guest) can actually fetch any of them -
+        // the AllowedTags policy is the real access boundary, so a successful
+        // fetch means the guest is allowed to be here (e.g. a season/episode
+        // inside a shared series or season).
+        return resolveServerVisibility(candidates);
+    }
+
+    function resolveServerVisibility(candidates) {
+        var pending = false;
+
+        for (var i = 0; i < candidates.length; i += 1) {
+            var id = candidates[i].toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(itemVisibilityCache, id)) {
+                if (itemVisibilityCache[id] === true) {
+                    return true;
+                }
+                continue;
+            }
+
+            pending = true;
+            if (!itemVisibilityInFlight[id]) {
+                itemVisibilityInFlight[id] = fetchItemVisibility(id);
+            }
+        }
+
+        // No definitive "allowed" verdict yet. If at least one candidate is
+        // still being checked, stay neutral (no redirect) until it settles.
+        // Only report a definitive rejection once every candidate has a
+        // cached, negative verdict.
+        return pending ? null : false;
+    }
+
+    function fetchItemVisibility(id) {
+        return Promise.resolve()
+            .then(function () {
+                var userId = ApiClient.getCurrentUserId();
+                return ApiClient.getItem(userId, id);
+            })
+            .then(function () {
+                itemVisibilityCache[id] = true;
+                return true;
+            })
+            .catch(function () {
+                itemVisibilityCache[id] = false;
+                return false;
+            })
+            .finally(function () {
+                delete itemVisibilityInFlight[id];
+                scheduleWork();
+            });
     }
 
     function navigateToItem(itemId) {

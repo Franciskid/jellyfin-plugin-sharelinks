@@ -1,15 +1,15 @@
 # ShareLinks for Jellyfin
 
-Send someone a single movie or episode, without giving them an account, without
-them seeing the rest of your library.
+Send someone a single movie, episode, season or whole series, without giving
+them an account, without them seeing the rest of your library.
 
 > *"here, watch this one film, the link dies tomorrow"*
 
 ShareLinks adds a **ShareLink** button (with a little share icon) to the context
-menu of any movie or episode in the Jellyfin web client. Click it, pick how long
-the link should live, and you get a URL you can send to anyone. When they open
-it, they land straight on that one title, already signed in, and they cannot
-wander off into the rest of your server.
+menu of any movie, episode, series or season in the Jellyfin web client. Click
+it, pick how long the link should live, and you get a URL you can send to
+anyone. When they open it, they land straight on that title, already signed in,
+and they cannot wander off into the rest of your server.
 
 No account for them to create, no password for you to hand out, no permanent
 guest user piling up. The link is temporary, the guest is temporary, and when it
@@ -26,34 +26,46 @@ real user or handing over a login that sees everything.
 
 ## How it works
 
-1. As an admin you open the context menu on a movie or episode and hit
-   **ShareLink**. You choose an expiry (1 hour up to 30 days) and the plugin
-   hands you a link, copied to your clipboard.
-2. Behind the scenes the plugin tags that one item with a unique, random tag and
-   records the share. The raw link token is shown to you once and never stored,
-   only a keyed HMAC hash of it is kept.
+1. As an admin you open the context menu on a movie, episode, series or season
+   and hit **ShareLink**. You choose an expiry (1 hour up to 30 days) and the
+   plugin hands you a link, copied to your clipboard.
+2. Behind the scenes the plugin tags the shared item with a unique, random tag
+   and records the share. Share a series or a season and the tag is applied to
+   the whole tree underneath it too - series, seasons and episodes - so the
+   guest can actually browse from the series page down into a season and an
+   episode, not just see a single locked node. The raw link token is shown to
+   you once and never stored, only a keyed HMAC hash of it is kept.
 3. Whoever opens the link gets a throwaway guest user created on the spot,
-   restricted by that tag to the single shared item, and is signed in
+   restricted by that tag to the shared item and its tree, and is signed in
    automatically. They land on the title's page.
 4. When the link expires (or you revoke it), a cleanup pass disables and deletes
-   the guest user and strips the temporary tag. A scheduled task and a startup
-   pass make sure nothing lingers if the server was off at expiry time.
+   the guest user and strips the temporary tag from the whole tree again. A
+   scheduled task and a startup pass make sure nothing lingers if the server was
+   off at expiry time.
 
 ## What the guest sees
 
-Just the one title, and the ability to play it. The confinement is real and it
-is enforced on the server, not only in the browser:
+Just the shared title (and, for a series or season, its seasons and episodes),
+and the ability to play them. The confinement is real and it is enforced on the
+server, not only in the browser:
 
-- The guest's Jellyfin policy only permits the single shared item, so every
-  other movie, show, library and search comes back empty from the API. Even
-  someone poking at the raw API cannot list your other content.
+- The guest's Jellyfin policy only permits items carrying the share's tag, so
+  every other movie, show, library and search comes back empty from the API.
+  Even someone poking at the raw API cannot list your other content.
 - On top of that, the web client is locked down for the guest: the home,
   menu and search buttons are hidden, in-page links (cast, studio, genres) are
-  made inert, "add to playlist" is removed, and any attempt to navigate away
-  snaps back to the shared title.
+  made inert, "add to playlist" is removed, and any attempt to navigate
+  somewhere outside the shared tree snaps back to the shared title. Navigating
+  within the tree - series to season to episode - works normally.
 
 Playback works normally, including transcoding and remuxing if you allow it, and
 the player's back button still returns them to the title's page.
+
+One honest caveat: if you share a series or season and new episodes get added
+to it later, those episodes only pick up the tag (and become visible to the
+guest) the next time the link is redeemed - not the instant they are added. For
+a one-use link that has already been redeemed, that never happens, so a
+one-use link is a snapshot of the tree as it existed at redemption time.
 
 ## Managing links
 

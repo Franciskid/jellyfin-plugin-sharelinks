@@ -128,7 +128,7 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
             {
                 try
                 {
-                    var removed = await _itemTagService.RemoveTagAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
+                    var removed = await _itemTagService.RemoveTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
                     record.MetadataTouched |= removed;
                 }
                 catch (Exception ex)
