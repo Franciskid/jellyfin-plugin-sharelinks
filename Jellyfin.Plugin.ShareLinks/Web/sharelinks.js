@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.0-ui-modal-9';
+    var clientVersion = '1.0.0-ui-modal-10';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -233,12 +233,15 @@
             + ' body.' + guestClassName + ' .mainDrawerButton,'
             + ' body.' + guestClassName + ' .headerSearchButton,'
             + ' body.' + guestClassName + ' [data-action="addtoplaylist"],'
-            + ' body.' + guestClassName + ' [data-action="addtocollection"] { display: none !important; }'
+            + ' body.' + guestClassName + ' [data-action="addtocollection"],'
+            + ' body.' + guestClassName + ' [data-id="playlist"],'
+            + ' body.' + guestClassName + ' [data-id="addtocollection"] { display: none !important; }'
             + ' body.' + guestClassName + ' .card,'
             + ' body.' + guestClassName + ' #castCollapsible a,'
             + ' body.' + guestClassName + ' .detailsGroupItem a,'
             + ' body.' + guestClassName + ' .genresGroup a,'
             + ' body.' + guestClassName + ' .studiosGroup a,'
+            + ' body.' + guestClassName + ' .itemTags a,'
             + ' body.' + guestClassName + ' .mediaInfoItem a { pointer-events: none !important; cursor: default !important; }';
         document.head.appendChild(style);
     }

@@ -62,11 +62,12 @@ gone.
 ## Hiding other plugins from guests
 
 If you run other plugins that inject their own UI into the web client (a search
-bar, a floating button), you probably do not want a guest to see them. The
-**Guest hidden selectors** setting is a comma-separated list of CSS selectors
-that get hidden in guest sessions. It ships with a default that hides the
-[AI Search](https://github.com/Franciskid) button; add any other plugin's
-selector and it disappears for guests too, no code change needed.
+bar, a floating button), you probably do not want a guest to see them. I had
+exactly that problem with a different plugin of mine, so the **Guest hidden
+selectors** setting is a comma-separated list of CSS selectors that get hidden
+in guest sessions. It ships with a default that hides that plugin's floating
+button and panel; add any other plugin's selector and it disappears for guests
+too, no code change needed.
 
 ## Security stance
 
