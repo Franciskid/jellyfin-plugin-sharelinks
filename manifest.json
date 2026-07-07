@@ -10,11 +10,11 @@
         "versions": [
             {
                 "version": "1.0.0.0",
-                "changelog": "Initial hybrid ShareLinks build with admin web menu integration, token redemption, temporary guest users, and cleanup.",
+                "changelog": "Initial release: ShareLink button on the item menu, temporary guest users confined by tag policy, expiring one-use links, admin dashboard with revoke, and a configurable guest lockdown that hides other plugins' UI.",
                 "targetAbi": "10.11.0.0",
-                "sourceUrl": "",
-                "checksum": "",
-                "timestamp": "2026-07-06T00:00:00Z"
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.0.0.0/sharelinks_1.0.0.0.zip",
+                "checksum": "4475c3952625eda228e70938293459cf",
+                "timestamp": "2026-07-07T00:00:00Z"
             }
         ]
     }
