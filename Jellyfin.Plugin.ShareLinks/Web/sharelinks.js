@@ -423,6 +423,10 @@
     }
 
     function looksLikeActionContainer(node) {
+        if (node.querySelector('select, input:not([type="checkbox"]):not([type="radio"]), textarea')) {
+            return false;
+        }
+
         var actions = Array.from(node.querySelectorAll('button, a, [role="menuitem"], [role="option"], .actionsheetMenuItem, .paperListButton'))
             .filter(isVisible);
         return actions.length >= 2 && actions.length <= 40;
