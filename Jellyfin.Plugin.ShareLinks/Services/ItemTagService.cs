@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -45,7 +46,7 @@ public sealed class ItemTagService
         tags.Add(tag);
         item.Tags = tags.ToArray();
         await PersistAsync(item, cancellationToken).ConfigureAwait(false);
-        _logger.LogInformation("ShareLinks: applied temporary tag {Tag} to item {ItemId}.", tag, item.Id);
+        _logger.LogDebug("ShareLinks: applied temporary tag {Tag} to item {ItemId}.", tag, item.Id);
         return true;
     }
 
@@ -71,8 +72,87 @@ public sealed class ItemTagService
 
         item.Tags = tags.ToArray();
         await PersistAsync(item, cancellationToken).ConfigureAwait(false);
-        _logger.LogInformation("ShareLinks: removed temporary tag {Tag} from item {ItemId}.", tag, item.Id);
+        _logger.LogDebug("ShareLinks: removed temporary tag {Tag} from item {ItemId}.", tag, item.Id);
         return true;
+    }
+
+    /// <summary>
+    /// Ensures the supplied tag is present on the item and, for a season or folder,
+    /// on the item's related tree (parent series for a season; all recursive
+    /// children for a folder such as a series or season) so a guest can browse the
+    /// whole shared branch instead of only the single node the link was created on.
+    /// </summary>
+    public async Task<bool> EnsureTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
+    {
+        if (item is null)
+        {
+            throw new ArgumentNullException(nameof(item));
+        }
+
+        var targets = BuildTagTreeTargets(item);
+        var changed = false;
+        foreach (var target in targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            changed |= await EnsureTagAsync(target, tag, cancellationToken).ConfigureAwait(false);
+        }
+
+        _logger.LogInformation(
+            "ShareLinks: ensured tag {Tag} across {Count} item(s) rooted at {ItemId} \"{ItemName}\".",
+            tag,
+            targets.Count,
+            item.Id,
+            item.Name);
+        return changed;
+    }
+
+    /// <summary>
+    /// Removes the supplied tag from the item and, for a season or folder, from the
+    /// item's related tree (mirrors <see cref="EnsureTagTreeAsync"/>).
+    /// </summary>
+    public async Task<bool> RemoveTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
+    {
+        if (item is null)
+        {
+            throw new ArgumentNullException(nameof(item));
+        }
+
+        var targets = BuildTagTreeTargets(item);
+        var changed = false;
+        foreach (var target in targets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            changed |= await RemoveTagAsync(target, tag, cancellationToken).ConfigureAwait(false);
+        }
+
+        _logger.LogInformation(
+            "ShareLinks: removed tag {Tag} across {Count} item(s) rooted at {ItemId} \"{ItemName}\".",
+            tag,
+            targets.Count,
+            item.Id,
+            item.Name);
+        return changed;
+    }
+
+    private static List<BaseItem> BuildTagTreeTargets(BaseItem item)
+    {
+        var targets = new List<BaseItem> { item };
+
+        if (item is Season season)
+        {
+            var series = season.Series ?? season.GetParent() as Series;
+            if (series is not null)
+            {
+                targets.Add(series);
+            }
+        }
+
+        if (item is Folder folder)
+        {
+            targets.AddRange(folder.GetRecursiveChildren());
+        }
+
+        return targets;
     }
 
     private async Task PersistAsync(BaseItem item, CancellationToken cancellationToken)

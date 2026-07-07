@@ -12,6 +12,7 @@ using Jellyfin.Plugin.ShareLinks.Models;
 using Jellyfin.Plugin.ShareLinks.Services;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -201,10 +202,10 @@ public sealed class ShareLinksController : ControllerBase
             return NotFound(new { error = "Item not found." });
         }
 
-        if (item.IsFolder)
+        if (item.IsFolder && item is not Series && item is not Season)
         {
             _logger.LogWarning("ShareLinks: create rejected, item {ItemId} \"{ItemName}\" is a folder or library, not shareable media.", itemId, item.Name);
-            return BadRequest(new { error = "Only a movie or episode can be shared, not a folder or library. Open the title's page and try again." });
+            return BadRequest(new { error = "Only a movie, episode, series or season can be shared, not a library or collection. Open the title's page and try again." });
         }
 
         try

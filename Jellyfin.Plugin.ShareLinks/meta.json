@@ -1,12 +1,12 @@
 {
   "guid": "68540b76-ee74-436d-85ff-2abc884bbea6",
   "name": "ShareLinks",
-  "version": "1.0.0.0",
+  "version": "1.0.1.0",
   "targetAbi": "10.11.0.0",
   "framework": "net9.0",
   "owner": "Franciskid",
   "overview": "Secure expiring guest-share links for Jellyfin items.",
   "description": "Adds secure, expiring share links for Jellyfin items with JSON-backed storage, token hashing, and cleanup scaffolding.",
   "category": "General",
-  "timestamp": "2026-07-06T00:00:00.0000000Z"
+  "timestamp": "2026-07-08T00:00:00.0000000Z"
 }

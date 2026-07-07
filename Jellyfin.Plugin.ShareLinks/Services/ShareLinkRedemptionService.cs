@@ -88,7 +88,7 @@ public sealed class ShareLinkRedemptionService
 
         if (!string.IsNullOrWhiteSpace(record.AllowedTag))
         {
-            await _itemTagService.EnsureTagAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
+            await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
             record.MetadataTouched = true;
         }
 
