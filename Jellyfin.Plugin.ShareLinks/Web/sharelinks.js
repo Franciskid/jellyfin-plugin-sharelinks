@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.0-ui-modal-11';
+    var clientVersion = '1.0.0-ui-modal-13';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -25,9 +25,79 @@
         { label: '12 hours', hours: 12 },
         { label: '1 day', hours: 24 },
         { label: '2 days', hours: 48 },
-        { label: '7 days', hours: 168 },
-        { label: '30 days', hours: 720 }
+        { label: '7 days', hours: 168 }
     ];
+
+    function isFrench() {
+        var lang = (document.documentElement.getAttribute('lang')
+            || (navigator && (navigator.language || navigator.userLanguage))
+            || 'en');
+        return /^fr/i.test(lang);
+    }
+
+    var STRINGS = {
+        en: {
+            modalTitle: 'Create guest link',
+            modalBody: 'Choose how long this link should stay valid.',
+            dateLabel: 'Or pick an exact expiry date and time:',
+            create: 'Create',
+            cancel: 'Cancel',
+            copy: 'Copy',
+            done: 'Done',
+            pickDateFirst: 'Pick a date and time first.',
+            dateInvalid: 'That date is not valid.',
+            pickFuture: 'Pick a time in the future.',
+            cannotDetermineItem: 'Could not determine which item to share. Open the item page and retry.',
+            adminOnly: 'ShareLinks is available to administrators only.',
+            disabled: 'ShareLinks is disabled.',
+            noShareUrl: 'The server did not return a share URL.',
+            couldNotCreate: 'Could not create a guest link.',
+            copiedNote: 'The link was copied to your clipboard.',
+            notCopiedNote: 'The link was created, but the browser blocked automatic clipboard access.',
+            resultCopiedTitle: 'Share link copied',
+            resultCreatedTitle: 'Share link created',
+            toastCopied: 'Share link copied.',
+            toastManual: 'Select and copy the link manually.',
+            hour: 'hour', hours: 'hours', day: 'day', days: 'days'
+        },
+        fr: {
+            modalTitle: 'Créer un lien invité',
+            modalBody: 'Choisissez la durée de validité de ce lien.',
+            dateLabel: 'Ou choisissez une date et une heure d\'expiration précises :',
+            create: 'Créer',
+            cancel: 'Annuler',
+            copy: 'Copier',
+            done: 'Terminé',
+            pickDateFirst: 'Choisissez d\'abord une date et une heure.',
+            dateInvalid: 'Cette date n\'est pas valide.',
+            pickFuture: 'Choisissez une date dans le futur.',
+            cannotDetermineItem: 'Impossible de déterminer l\'élément à partager. Ouvrez la page du média et réessayez.',
+            adminOnly: 'ShareLinks est réservé aux administrateurs.',
+            disabled: 'ShareLinks est désactivé.',
+            noShareUrl: 'Le serveur n\'a pas renvoyé de lien de partage.',
+            couldNotCreate: 'Impossible de créer le lien invité.',
+            copiedNote: 'Le lien a été copié dans le presse-papiers.',
+            notCopiedNote: 'Le lien a été créé, mais le navigateur a bloqué l\'accès automatique au presse-papiers.',
+            resultCopiedTitle: 'Lien de partage copié',
+            resultCreatedTitle: 'Lien de partage créé',
+            toastCopied: 'Lien de partage copié.',
+            toastManual: 'Sélectionnez et copiez le lien manuellement.',
+            hour: 'heure', hours: 'heures', day: 'jour', days: 'jours'
+        }
+    };
+
+    function t(key) {
+        var lang = isFrench() ? 'fr' : 'en';
+        return (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
+    }
+
+    function durationLabel(hours) {
+        if (hours < 24) {
+            return hours + ' ' + t(hours === 1 ? 'hour' : 'hours');
+        }
+        var d = hours / 24;
+        return d + ' ' + t(d === 1 ? 'day' : 'days');
+    }
 
     window.ShareLinksClientVersion = clientVersion;
 
@@ -627,7 +697,7 @@
 
     async function createGuestLink(itemId) {
         if (!isItemGuid(itemId)) {
-            notify('Could not determine which item to share. Open the item page and retry.');
+            notify(t('cannotDetermineItem'));
             return;
         }
 
@@ -635,12 +705,12 @@
             var config = await getConfig();
             var user = await getCurrentUser();
             if (!isAdministrator(user)) {
-                notify('ShareLinks is available to administrators only.');
+                notify(t('adminOnly'));
                 return;
             }
 
             if (config && config.Enabled === false) {
-                notify('ShareLinks is disabled.');
+                notify(t('disabled'));
                 return;
             }
 
@@ -654,7 +724,7 @@
                 var shareUrlPromise = apiPost('ShareLinks/Admin/Create', payload).then(function (response) {
                     var shareUrl = response && (response.ShareUrl || response.shareUrl);
                     if (!shareUrl) {
-                        throw new Error('The server did not return a share URL.');
+                        throw new Error(t('noShareUrl'));
                     }
 
                     return shareUrl;
@@ -678,24 +748,48 @@
 
             showShareResult(result.shareUrl, result.copied);
         } catch (error) {
-            notify(extractErrorMessage(error, 'Could not create a guest link.'));
+            notify(extractErrorMessage(error, t('couldNotCreate')));
         }
+    }
+
+    function pad2(value) {
+        return (value < 10 ? '0' : '') + value;
+    }
+
+    function toLocalDatetimeValue(date) {
+        return date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate())
+            + 'T' + pad2(date.getHours()) + ':' + pad2(date.getMinutes());
     }
 
     function chooseExpiryHours(config, onChoose) {
         var options = durationOptions.map(function (option) {
             return {
-                label: option.label,
+                label: durationLabel(option.hours),
                 hours: option.hours
             };
         });
 
+        var maxHours = Math.max(clampPositiveInteger(config && config.MaxExpiryHours, 720), 720);
+        var nowMs = Date.now();
+        var minDate = new Date(nowMs + 5 * 60000);
+        var maxDate = new Date(nowMs + maxHours * 3600000);
+        var defaultDate = new Date(nowMs + 168 * 3600000);
+        if (defaultDate.getTime() > maxDate.getTime()) {
+            defaultDate = maxDate;
+        }
+
         return openModal({
-            title: 'Create guest link',
-            body: 'Choose how long this link should stay valid.',
+            title: t('modalTitle'),
+            body: t('modalBody'),
             options: options,
             onChoose: onChoose,
-            cancelText: 'Cancel'
+            cancelText: t('cancel'),
+            datePicker: {
+                min: toLocalDatetimeValue(minDate),
+                max: toLocalDatetimeValue(maxDate),
+                value: toLocalDatetimeValue(defaultDate),
+                maxHours: maxHours
+            }
         });
     }
 
@@ -755,8 +849,8 @@
         var note = document.createElement('p');
         note.className = 'sharelinks-note';
         note.textContent = copied
-            ? 'The link was copied to your clipboard.'
-            : 'The link was created, but the browser blocked automatic clipboard access.';
+            ? t('copiedNote')
+            : t('notCopiedNote');
         body.appendChild(note);
 
         var urlBox = document.createElement('textarea');
@@ -766,27 +860,27 @@
         body.appendChild(urlBox);
 
         openModalElement({
-            title: copied ? 'Share link copied' : 'Share link created',
+            title: copied ? t('resultCopiedTitle') : t('resultCreatedTitle'),
             bodyElement: body,
             actions: [
                 {
-                    label: 'Copy',
+                    label: t('copy'),
                     primary: true,
                     handler: function () {
                         return copyText(shareUrl).then(function (ok) {
                             if (ok) {
-                                notify('Share link copied.');
+                                notify(t('toastCopied'));
                             } else {
                                 urlBox.focus();
                                 urlBox.select();
-                                notify('Select and copy the link manually.');
+                                notify(t('toastManual'));
                             }
                             return ok;
                         });
                     }
                 },
                 {
-                    label: 'Done',
+                    label: t('done'),
                     close: true
                 }
             ],
@@ -808,19 +902,81 @@
         grid.className = 'sharelinks-duration-grid';
         body.appendChild(grid);
 
+        var dateInput = null;
+        if (settings.datePicker) {
+            var dateRow = document.createElement('div');
+            dateRow.className = 'sharelinks-date-row';
+
+            var dateLabel = document.createElement('label');
+            dateLabel.className = 'sharelinks-date-label';
+            dateLabel.textContent = t('dateLabel');
+
+            dateInput = document.createElement('input');
+            dateInput.type = 'datetime-local';
+            dateInput.className = 'sharelinks-date-input';
+            dateInput.min = settings.datePicker.min;
+            dateInput.max = settings.datePicker.max;
+            dateInput.value = settings.datePicker.value;
+
+            dateLabel.setAttribute('for', 'sharelinksExpiryDate');
+            dateInput.id = 'sharelinksExpiryDate';
+
+            dateRow.appendChild(dateLabel);
+            dateRow.appendChild(dateInput);
+            body.appendChild(dateRow);
+        }
+
         return new Promise(function (resolve) {
-            var modal = openModalElement({
+            var modal;
+            var actions = [];
+
+            if (settings.datePicker) {
+                actions.push({
+                    label: t('create'),
+                    primary: true,
+                    handler: function () {
+                        var raw = dateInput && dateInput.value;
+                        if (!raw) {
+                            notify(t('pickDateFirst'));
+                            return;
+                        }
+
+                        var target = new Date(raw);
+                        if (isNaN(target.getTime())) {
+                            notify(t('dateInvalid'));
+                            return;
+                        }
+
+                        var hours = Math.ceil((target.getTime() - Date.now()) / 3600000);
+                        if (hours < 1) {
+                            notify(t('pickFuture'));
+                            return;
+                        }
+
+                        if (settings.datePicker.maxHours && hours > settings.datePicker.maxHours) {
+                            hours = settings.datePicker.maxHours;
+                        }
+
+                        if (modal) {
+                            modal.close();
+                        }
+                        resolve(settings.onChoose ? settings.onChoose(hours) : hours);
+                    }
+                });
+            }
+
+            actions.push({
+                label: settings.cancelText || t('cancel'),
+                close: true,
+                handler: function () {
+                    resolve(null);
+                }
+            });
+
+            modal = openModalElement({
                 title: settings.title,
                 bodyElement: body,
-                actions: [
-                    {
-                        label: settings.cancelText || 'Cancel',
-                        close: true,
-                        handler: function () {
-                            resolve(null);
-                        }
-                    }
-                ],
+                actions: actions,
                 onDismiss: function () {
                     resolve(null);
                 }
@@ -950,6 +1106,9 @@
             '.sharelinks-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}',
             '.sharelinks-action.primary{background:var(--theme-primary-color,#00a4dc);color:#fff;}',
             '.sharelinks-url{width:100%;min-height:88px;box-sizing:border-box;border:1px solid rgba(255,255,255,.2);border-radius:6px;background:rgba(0,0,0,.18);color:inherit;padding:10px;font:inherit;resize:vertical;}',
+            '.sharelinks-date-row{margin-top:18px;display:flex;flex-direction:column;gap:8px;}',
+            '.sharelinks-date-label{color:var(--text-secondary-color,#cfcfcf);font-size:.92rem;line-height:1.4;}',
+            '.sharelinks-date-input{width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.2);border-radius:6px;background:rgba(0,0,0,.18);color:inherit;padding:10px 12px;min-height:42px;font:inherit;color-scheme:dark;}',
             '.sharelinks-toast{position:fixed;left:24px;bottom:24px;z-index:1000000;max-width:min(460px,calc(100vw - 48px));background:rgba(24,24,24,.96);color:#fff;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:11px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease;}',
             '.sharelinks-toast.is-visible{opacity:1;transform:translateY(0);}',
             '@media (max-width:520px){.sharelinks-duration-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.sharelinks-dialog{padding:18px;}.sharelinks-actions{justify-content:stretch;}.sharelinks-action{flex:1;}}'
