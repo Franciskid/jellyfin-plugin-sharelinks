@@ -118,6 +118,12 @@ the list.
 - The UI injection targets the standard Jellyfin web client, and works with both
   the English and French interface.
 
+## Install
+
+Dashboard => Plugins => Manage repositories => New repository => https://raw.githubusercontent.com/Franciskid/jellyfin-plugin-sharelinks/main/manifest.json
+
+**You may need to hard refresh the page for the button to appear**
+
 ## Credits and license
 
 Developed by [Franciskid](https://github.com/Franciskid).
