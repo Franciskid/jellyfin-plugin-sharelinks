@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.1-ui-1';
+    var clientVersion = '1.0.1-ui-2';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -352,7 +352,8 @@
             + ' body.' + guestClassName + ' [data-action="addtocollection"],'
             + ' body.' + guestClassName + ' [data-id="playlist"],'
             + ' body.' + guestClassName + ' [data-id="addtocollection"] { display: none !important; }'
-            + ' body.' + guestClassName + ' .card,'
+            // Cards stay clickable so guests can navigate season/episode cards on a shared series;
+            // checkAllowedLocation() verifies the destination server-side and redirects if disallowed.
             + ' body.' + guestClassName + ' #castCollapsible a,'
             + ' body.' + guestClassName + ' .detailsGroupItem a,'
             + ' body.' + guestClassName + ' .genresGroup a,'
@@ -541,14 +542,14 @@
             }
         }
 
-        return actions.length ? actions[actions.length - 1] : null;
+        return actions.length ? actions[0] : null;
     }
 
     function isVisible(node) {
         return !!(node && (node.offsetWidth || node.offsetHeight || node.getClientRects().length));
     }
 
-    function insertActionAfter(copyNode, explicitItemId, appendToParent) {
+    function insertActionAfter(copyNode, explicitItemId, insertAtTop) {
         var parent = copyNode.parentElement;
         if (!parent || parent.querySelector('[' + injectedAttr + '="1"]')) {
             return;
@@ -568,6 +569,9 @@
         injected.removeAttribute('onclick');
         injected.removeAttribute('target');
         injected.removeAttribute('download');
+        // The clone inherits the template's data-id (e.g. 'moreinfo'), which would duplicate
+        // an existing menu item's id and could shadow/trigger its command; strip it.
+        injected.removeAttribute('data-id');
         injected.setAttribute('aria-label', actionLabel);
         injected.setAttribute('title', actionLabel);
         injected.dataset.sharelinksItemId = itemId;
@@ -588,8 +592,8 @@
             injected.textContent = actionLabel;
         }
 
-        if (appendToParent) {
-            parent.appendChild(injected);
+        if (insertAtTop) {
+            copyNode.insertAdjacentElement('beforebegin', injected);
         } else {
             copyNode.insertAdjacentElement('afterend', injected);
         }
