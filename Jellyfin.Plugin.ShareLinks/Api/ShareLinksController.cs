@@ -12,6 +12,7 @@ using Jellyfin.Plugin.ShareLinks.Models;
 using Jellyfin.Plugin.ShareLinks.Services;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -202,10 +203,14 @@ public sealed class ShareLinksController : ControllerBase
             return NotFound(new { error = "Item not found." });
         }
 
-        if (item.IsFolder && item is not Series && item is not Season)
+        if (!IsShareableItem(item))
         {
-            _logger.LogWarning("ShareLinks: create rejected, item {ItemId} \"{ItemName}\" is a folder or library, not shareable media.", itemId, item.Name);
-            return BadRequest(new { error = "Only a movie, episode, series or season can be shared, not a library or collection. Open the title's page and try again." });
+            _logger.LogWarning(
+                "ShareLinks: create rejected, item {ItemId} \"{ItemName}\" is a {ItemType}, which is not shareable media.",
+                itemId,
+                item.Name,
+                item.GetType().Name);
+            return BadRequest(new { error = "Only a movie, series, season or episode can be shared. Open the title's page and try again." });
         }
 
         try
@@ -410,6 +415,17 @@ setTimeout(function () { window.location.replace({{redirectUrlJson}}); }, 4000);
         return User.FindFirst("Jellyfin-UserName")?.Value
             ?? User.FindFirst(ClaimTypes.Name)?.Value
             ?? User.Identity?.Name;
+    }
+
+    /// <summary>
+    /// Only real video titles are shareable. Anything else - a person, studio,
+    /// genre, library, collection, playlist, music track or book - would either
+    /// give the guest nothing to play or pull unrelated items into the guest's tag
+    /// policy, so the API refuses it even when a client asks for it.
+    /// </summary>
+    private static bool IsShareableItem(BaseItem item)
+    {
+        return item is Movie or Series or Season or Episode;
     }
 
     private static bool IsExpired(ShareLinkRecord record)

@@ -2,27 +2,36 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.1-ui-2';
+    var clientVersion = '1.0.2-ui-3';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
     var injectedAttr = 'data-sharelinks-injected';
     var configPromise = null;
     var userPromise = null;
+    var userPromiseUserId = null;
     var guestStatePromise = null;
+    var guestStatePromiseUserId = null;
     var booted = false;
     var scanQueued = false;
     var bootRetry = null;
     var observer = null;
-    var lastContextItemId = null;
-    var lastContextItemTs = 0;
+    var menuContext = null;
+    var shareableItemTypes = ['movie', 'series', 'season', 'episode'];
+    var menuTriggerSelector = '[data-action="menu"], .btnMoreCommands, .btnCardOptions, .cardOverlayButton';
+    var itemTypeCache = {};
+    var itemTypeInFlight = {};
     var historyPatched = false;
     var itemMenuActionIds = [
-        'moreinfo', 'mediainfo', 'editmetadata', 'editimages', 'editsubtitles',
-        'editlyrics', 'identify', 'refreshmetadata', 'refresh', 'playlist',
-        'addtoplaylist', 'addtocollection', 'instantmix', 'shuffle', 'resume',
-        'copy-stream', 'copystream', 'share', 'download', 'delete',
-        'edit'
+        'resume', 'playallfromhere', 'queue', 'queuenext', 'shuffle', 'instantmix',
+        'multiselect', 'addtocollection', 'addtoplaylist', 'editplaylist',
+        'removefromcollection', 'removefromplaylist', 'movetotop', 'movetobottom',
+        'download', 'downloadall', 'copy-stream', 'delete', 'edit', 'editimages',
+        'editsubtitles', 'editlyrics', 'identify', 'moremediainfo', 'refresh',
+        'record', 'canceltimer', 'cancelseriestimer', 'share', 'album', 'artist',
+        'lyrics',
+        // Older Jellyfin web builds used these ids for the same commands.
+        'moreinfo', 'mediainfo', 'editmetadata', 'playlist', 'copystream'
     ];
     var durationOptions = [
         { label: '1 hour', hours: 1 },
@@ -142,16 +151,7 @@
         window.addEventListener('popstate', scheduleWork, true);
 
         document.addEventListener('pointerdown', function (event) {
-            var node = event.target;
-            while (node && node !== document) {
-                var id = readItemIdFromNode(node);
-                if (id) {
-                    lastContextItemId = id;
-                    lastContextItemTs = Date.now();
-                    return;
-                }
-                node = node.parentElement;
-            }
+            rememberMenuContext(event.target);
         }, true);
 
         observer = new MutationObserver(scheduleWork);
@@ -224,21 +224,41 @@
         return configPromise;
     }
 
+    /**
+     * The web client is a single page app: signing out or switching accounts does
+     * not reload the document, so anything cached for "the current user" has to be
+     * keyed to the session it came from. Caching it for the lifetime of the page
+     * let an admin's verdict survive into the next user's session.
+     */
     function getCurrentUser() {
-        if (!userPromise) {
+        var userId = currentApiUserId();
+        if (!userPromise || userPromiseUserId !== userId) {
+            userPromiseUserId = userId;
             userPromise = apiGet('Users/Me').catch(function () {
                 return null;
             });
         }
+
         return userPromise;
     }
 
+    function currentApiUserId() {
+        try {
+            return (window.ApiClient && ApiClient.getCurrentUserId && ApiClient.getCurrentUserId()) || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
     function getGuestState() {
-        if (!guestStatePromise) {
+        var userId = currentApiUserId();
+        if (!guestStatePromise || guestStatePromiseUserId !== userId) {
+            guestStatePromiseUserId = userId;
             guestStatePromise = apiGet('ShareLinks/GuestState').catch(function () {
                 return null;
             });
         }
+
         return guestStatePromise;
     }
 
@@ -438,20 +458,135 @@
     async function scanForMoreMenuActions() {
         var user = await getCurrentUser();
         if (!isAdministrator(user)) {
+            // Take back anything injected for a previous session rather than only
+            // skipping: a switch inside the SPA leaves the old DOM in place.
+            removeInjectedActions();
             return;
         }
 
-        var copyNodes = [];
-        Array.from(document.querySelectorAll('button, a, [role="menuitem"], [role="option"], .actionsheetMenuItem, .paperListButton')).forEach(function (node) {
-            if (isCopyStreamUrlLabel(getVisibleLabel(node))) {
-                copyNodes.push(node);
-                insertActionAfter(node);
-            }
-        });
-
-        if (copyNodes.length === 0) {
-            insertIntoOpenMenuFallback();
+        var container = findOpenActionContainer();
+        if (!container || container.querySelector('[' + injectedAttr + '="1"]')) {
+            return;
         }
+
+        var itemId = resolveMenuItemId();
+        if (!itemId || isShareableItem(itemId) !== true) {
+            // Either this is not an item menu we can share from (a person, a
+            // studio, a library...) or the type lookup is still running.
+            // fetchItemType() re-runs this scan once the verdict is known.
+            return;
+        }
+
+        appendActionSection(container, itemId);
+    }
+
+    function removeInjectedActions() {
+        Array.prototype.forEach.call(document.querySelectorAll('[' + injectedAttr + '="1"]'), function (node) {
+            node.remove();
+        });
+    }
+
+    /**
+     * Records which item's "more" menu is about to open. The action sheet is a
+     * detached, body-level element with no link back to the card or row it was
+     * opened from, so the trigger that was just pressed is the only reliable
+     * signal. Any other pointerdown clears the context, so a stale item can never
+     * be picked up by a later menu.
+     */
+    function rememberMenuContext(target) {
+        var node = target;
+        while (node && node !== document) {
+            if (isMenuTrigger(node)) {
+                menuContext = {
+                    itemId: findItemIdInAncestors(node),
+                    isPageMenu: !!(node.classList && node.classList.contains('btnMoreCommands')),
+                    ts: Date.now()
+                };
+                return;
+            }
+            node = node.parentElement;
+        }
+
+        menuContext = null;
+    }
+
+    function isMenuTrigger(node) {
+        if (!node || !node.matches) {
+            return false;
+        }
+
+        if (node.matches(menuTriggerSelector)) {
+            return true;
+        }
+
+        return node.tagName === 'BUTTON' && !!node.querySelector('.material-icons.more_vert');
+    }
+
+    function findItemIdInAncestors(node) {
+        var current = node;
+        while (current && current !== document) {
+            var id = readItemIdFromNode(current);
+            if (id) {
+                return id;
+            }
+            current = current.parentElement;
+        }
+
+        return null;
+    }
+
+    /** The item whose menu is open right now, or null when we cannot tell. */
+    function resolveMenuItemId() {
+        if (!menuContext || (Date.now() - menuContext.ts) > 15000) {
+            return null;
+        }
+
+        if (menuContext.itemId) {
+            return menuContext.itemId;
+        }
+
+        // The detail page's own "..." button sits in the page header, outside any
+        // element carrying the item id, so the route is the item in that case.
+        return menuContext.isPageMenu ? (parseItemIdFromUrl() || findItemIdInDocument()) : null;
+    }
+
+    /**
+     * Returns true when the item is a movie, series, season or episode, false when
+     * it is anything else (a person, a studio, a library, a track), and null while
+     * the lookup is still in flight.
+     */
+    function isShareableItem(itemId) {
+        var id = String(itemId || '').toLowerCase();
+        if (!isItemGuid(id)) {
+            return false;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(itemTypeCache, id)) {
+            return shareableItemTypes.indexOf(itemTypeCache[id]) >= 0;
+        }
+
+        if (!itemTypeInFlight[id]) {
+            itemTypeInFlight[id] = fetchItemType(id);
+        }
+
+        return null;
+    }
+
+    function fetchItemType(id) {
+        return Promise.resolve()
+            .then(function () {
+                return ApiClient.getItem(ApiClient.getCurrentUserId(), id);
+            })
+            .then(function (item) {
+                itemTypeCache[id] = String((item && item.Type) || '').toLowerCase();
+            })
+            .catch(function () {
+                itemTypeCache[id] = '';
+            })
+            .finally(function () {
+                delete itemTypeInFlight[id];
+                scheduleWork();
+            });
     }
 
     function isCopyStreamUrlLabel(label) {
@@ -463,25 +598,6 @@
         return value === copyLabel.toLowerCase()
             || (value.indexOf('copy') >= 0 && value.indexOf('stream') >= 0 && value.indexOf('url') >= 0)
             || (value.indexOf('copier') >= 0 && value.indexOf('url') >= 0 && (value.indexOf('flux') >= 0 || value.indexOf('stream') >= 0));
-    }
-
-    function insertIntoOpenMenuFallback() {
-        var itemId = resolveItemId(document);
-        if (!itemId) {
-            return;
-        }
-
-        var container = findOpenActionContainer();
-        if (!container || container.querySelector('[' + injectedAttr + '="1"]')) {
-            return;
-        }
-
-        var template = findBestActionTemplate(container);
-        if (!template) {
-            return;
-        }
-
-        insertActionAfter(template, itemId, true);
     }
 
     function isItemMenuAction(node) {
@@ -535,12 +651,10 @@
 
     function findBestActionTemplate(container) {
         var actions = Array.from(container.querySelectorAll('.actionSheetMenuItem, .actionsheetMenuItem'))
-            .filter(isVisible);
-        for (var i = 0; i < actions.length; i += 1) {
-            if (isCopyStreamUrlLabel(getVisibleLabel(actions[i]))) {
-                return actions[i];
-            }
-        }
+            .filter(isVisible)
+            .filter(function (node) {
+                return node.getAttribute(injectedAttr) !== '1';
+            });
 
         return actions.length ? actions[0] : null;
     }
@@ -549,88 +663,117 @@
         return !!(node && (node.offsetWidth || node.offsetHeight || node.getClientRects().length));
     }
 
-    function insertActionAfter(copyNode, explicitItemId, insertAtTop) {
-        var parent = copyNode.parentElement;
-        if (!parent || parent.querySelector('[' + injectedAttr + '="1"]')) {
+    /**
+     * Appends the ShareLink action as its own section at the very bottom of the
+     * menu, separated from the native commands by the same divider Jellyfin
+     * renders between its own groups.
+     */
+    function appendActionSection(container, itemId) {
+        var template = findBestActionTemplate(container);
+        if (!template) {
             return;
         }
 
-        var itemId = explicitItemId || resolveItemId(copyNode) || resolveItemId(document);
-        if (!itemId) {
+        var scroller = container.querySelector('.actionSheetScroller') || template.parentElement;
+        if (!scroller) {
             return;
         }
 
-        var sourceLabel = getVisibleLabel(copyNode);
-        var injected = copyNode.cloneNode(true);
-        injected.setAttribute(injectedAttr, '1');
-        injected.setAttribute('type', 'button');
-        injected.removeAttribute('id');
-        injected.removeAttribute('href');
-        injected.removeAttribute('onclick');
-        injected.removeAttribute('target');
-        injected.removeAttribute('download');
-        // The clone inherits the template's data-id (e.g. 'moreinfo'), which would duplicate
-        // an existing menu item's id and could shadow/trigger its command; strip it.
-        injected.removeAttribute('data-id');
-        injected.setAttribute('aria-label', actionLabel);
-        injected.setAttribute('title', actionLabel);
-        injected.dataset.sharelinksItemId = itemId;
+        var divider = document.createElement('div');
+        divider.className = 'actionsheetDivider';
+        divider.setAttribute(injectedAttr, '1');
 
-        var injectedIcon = injected.querySelector('.material-icons');
-        if (injectedIcon) {
-            injectedIcon.classList.remove('content_copy');
-            injectedIcon.classList.add('share');
+        var action = buildShareAction(template, itemId, container);
+
+        // Jellyfin puts its Cancel button in a trailing .buttons block inside the
+        // scroller; our section belongs after the last command but above that.
+        var cancelBlock = scroller.querySelector('.buttons');
+        if (cancelBlock) {
+            cancelBlock.insertAdjacentElement('beforebegin', divider);
+            divider.insertAdjacentElement('afterend', action);
+            return;
         }
 
-        injected.addEventListener('click', function (event) {
+        scroller.appendChild(divider);
+        scroller.appendChild(action);
+    }
+
+    function buildShareAction(template, itemId, container) {
+        var action = template.cloneNode(true);
+        action.setAttribute(injectedAttr, '1');
+        action.setAttribute('type', 'button');
+        action.removeAttribute('id');
+        action.removeAttribute('href');
+        action.removeAttribute('onclick');
+        action.removeAttribute('target');
+        action.removeAttribute('download');
+        action.removeAttribute('autoFocus');
+        // The clone inherits the template's data-id (e.g. 'edit'), which would
+        // duplicate an existing menu item's id and let the action sheet run that
+        // command instead; strip it.
+        action.removeAttribute('data-id');
+        action.setAttribute('aria-label', actionLabel);
+        action.setAttribute('title', actionLabel);
+        action.dataset.sharelinksItemId = itemId;
+
+        setActionLabel(action);
+        setActionIcon(action);
+
+        action.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
+            closeActionSheet(container);
             void createGuestLink(itemId);
         }, true);
 
-        if (!replaceText(injected, sourceLabel, actionLabel)) {
-            injected.textContent = actionLabel;
-        }
-
-        if (insertAtTop) {
-            copyNode.insertAdjacentElement('beforebegin', injected);
-        } else {
-            copyNode.insertAdjacentElement('afterend', injected);
-        }
+        return action;
     }
 
-    function replaceText(root, from, to) {
-        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-        while (walker.nextNode()) {
-            var node = walker.currentNode;
-            if (normalizeText(node.nodeValue) === from) {
-                node.nodeValue = node.nodeValue.replace(from, to);
-                return true;
-            }
+    function setActionLabel(action) {
+        Array.from(action.querySelectorAll('.listItemBodyText.secondary, .listItemAside')).forEach(function (node) {
+            node.remove();
+        });
+
+        var text = action.querySelector('.actionSheetItemText') || action.querySelector('.listItemBodyText');
+        if (text) {
+            text.textContent = actionLabel;
+            return;
         }
-        return false;
+
+        action.textContent = actionLabel;
     }
 
-    function resolveItemId(node) {
-        var direct = parseItemIdFromUrl();
-        if (direct) {
-            return direct;
+    function setActionIcon(action) {
+        var icon = action.querySelector('.material-icons');
+        if (!icon) {
+            icon = document.createElement('span');
+            icon.setAttribute('aria-hidden', 'true');
+            action.insertBefore(icon, action.firstChild);
         }
 
-        var current = node;
-        while (current && current !== document) {
-            var id = readItemIdFromNode(current);
-            if (id) {
-                return id;
-            }
-            current = current.parentElement;
+        icon.className = 'actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons share';
+        icon.style.removeProperty('visibility');
+    }
+
+    /**
+     * Dismisses the native action sheet so our dialog is not stacked on top of it.
+     * Clicking the sheet's own close button keeps Jellyfin's animation and state
+     * handling; Escape is the fallback when the sheet renders without one.
+     */
+    function closeActionSheet(container) {
+        var closeButton = container.querySelector('.btnCloseActionSheet');
+        if (closeButton) {
+            closeButton.click();
+            return;
         }
 
-        if (lastContextItemId && (Date.now() - lastContextItemTs) < 8000) {
-            return lastContextItemId;
-        }
-
-        return findItemIdInDocument();
+        container.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape',
+            keyCode: 27,
+            which: 27,
+            bubbles: true,
+            cancelable: true
+        }));
     }
 
     function parseItemIdFromUrl() {
