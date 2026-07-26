@@ -75,6 +75,40 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         await CleanupRecordInternalAsync(record, records, force, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Runs a normal cleanup pass and then drops every record that is finished
+    /// with, so the admin list does not grow forever. A link that can still be
+    /// used is never removed, and neither is one whose guest is still watching.
+    /// </summary>
+    public async Task<int> PurgeFinishedAsync(CancellationToken cancellationToken)
+    {
+        // Teardown first: this expires anything past its date and removes the guest
+        // account and tags, so nothing is dropped from the store while it still has
+        // state hanging off it.
+        await CleanupAsync(cancellationToken).ConfigureAwait(false);
+
+        var records = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
+        var removed = 0;
+        foreach (var record in records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (record.Status is not (ShareLinkStatus.Expired or ShareLinkStatus.Revoked or ShareLinkStatus.Failed))
+            {
+                continue;
+            }
+
+            await _store.DeleteAsync(record.Id, cancellationToken).ConfigureAwait(false);
+            removed++;
+        }
+
+        if (removed > 0)
+        {
+            _logger.LogInformation("ShareLinks: purged {Count} finished share-link record(s).", removed);
+        }
+
+        return removed;
+    }
+
     private async Task<ShareLinkRecord> CleanupRecordInternalAsync(
         ShareLinkRecord record,
         IReadOnlyList<ShareLinkRecord> allRecords,
