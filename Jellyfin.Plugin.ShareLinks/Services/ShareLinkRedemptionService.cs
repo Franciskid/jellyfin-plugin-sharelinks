@@ -1,5 +1,5 @@
 using System;
-using System.Security;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -112,6 +112,19 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
+        // Turn an over-the-ceiling viewer away before anything is written: no tag
+        // work, no status change, no guest account touched. Jellyfin enforces the
+        // same limit itself when the session is created, but it does so by throwing,
+        // and a throw here would land in the failure path below and tear the whole
+        // share down on the people already watching.
+        if (IsAtViewerCeiling(record))
+        {
+            _logger.LogInformation(
+                "ShareLinks: record {RecordId} is at its viewer ceiling; turning a viewer away.",
+                record.Id);
+            return new ShareLinkRedemptionResult { AtCapacity = true };
+        }
+
         if (!Guid.TryParse(record.ItemId, out var itemId))
         {
             await HandleFailureAsync(record, "Shared item snapshot is invalid.", cancellationToken).ConfigureAwait(false);
@@ -176,15 +189,17 @@ public sealed class ShareLinkRedemptionService
             record.CleanupError = null;
             await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
         }
-        catch (SecurityException ex)
+        catch (MediaBrowser.Controller.Net.SecurityException ex)
         {
-            // The link is fine, the guest account has simply reached its viewer
-            // ceiling. Leave the record and the guest alone: marking this failed
-            // would tear down the account and throw out everyone already watching.
+            // Backstop for the race between the ceiling check above and this call.
+            // Jellyfin's own type, NOT System.Security.SecurityException. The link is
+            // fine, so leave the record and the guest exactly as they were: marking
+            // this failed would tear the account down and throw out everyone already
+            // watching.
+            _logger.LogInformation(ex, "ShareLinks: record {RecordId} hit its viewer ceiling while creating the session.", record.Id);
             record.Status = record.RedeemedAtUtc.HasValue ? ShareLinkStatus.Redeemed : ShareLinkStatus.Active;
             record.CleanupError = null;
             await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation(ex, "ShareLinks: record {RecordId} is at its viewer ceiling; turning a viewer away.", record.Id);
             return new ShareLinkRedemptionResult { AtCapacity = true };
         }
         catch (Exception ex)
@@ -198,6 +213,32 @@ public sealed class ShareLinkRedemptionService
         }
 
         return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, itemId) };
+    }
+
+    /// <summary>
+    /// Returns true when the share already has as many viewers watching as it is
+    /// allowed. Mirrors the limit Jellyfin applies when it creates a session, so we
+    /// can refuse politely instead of letting it throw.
+    /// </summary>
+    private bool IsAtViewerCeiling(ShareLinkRecord record)
+    {
+        if (!record.GuestUserId.HasValue)
+        {
+            // Nobody has redeemed this link yet, so nothing can be at a ceiling.
+            return false;
+        }
+
+        var ceiling = record.OneUse
+            ? 1
+            : Math.Max(Plugin.Instance?.Configuration.MaxConcurrentViewers ?? 0, 0);
+        if (ceiling < 1)
+        {
+            // 0 means no limit, the same way Jellyfin reads it.
+            return false;
+        }
+
+        var guestUserId = record.GuestUserId.Value;
+        return _sessionManager.Sessions.Count(session => session.UserId.Equals(guestUserId)) >= ceiling;
     }
 
     private async Task HandleTerminalRecordAsync(ShareLinkRecord record, ShareLinkStatus terminalStatus, string reason, CancellationToken cancellationToken)
