@@ -77,10 +77,10 @@ public sealed class ItemTagService
     }
 
     /// <summary>
-    /// Ensures the supplied tag is present on the item and, for a season or folder,
-    /// on the item's related tree (parent series for a season; all recursive
-    /// children for a folder such as a series or season) so a guest can browse the
-    /// whole shared branch instead of only the single node the link was created on.
+    /// Ensures the supplied tag is present on the item and, when the item is a folder
+    /// such as a series or a season, on everything underneath it, so a guest can
+    /// browse down through the shared branch instead of only seeing the single node
+    /// the link was created on.
     /// </summary>
     public async Task<bool> EnsureTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
     {
@@ -107,8 +107,8 @@ public sealed class ItemTagService
     }
 
     /// <summary>
-    /// Removes the supplied tag from the item and, for a season or folder, from the
-    /// item's related tree (mirrors <see cref="EnsureTagTreeAsync"/>).
+    /// Removes the supplied tag from the item and, when it is a folder, from
+    /// everything underneath it (mirrors <see cref="EnsureTagTreeAsync"/>).
     /// </summary>
     public async Task<bool> RemoveTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
     {
@@ -117,7 +117,7 @@ public sealed class ItemTagService
             throw new ArgumentNullException(nameof(item));
         }
 
-        var targets = BuildTagTreeTargets(item);
+        var targets = BuildTagRemovalTargets(item);
         var changed = false;
         foreach (var target in targets)
         {
@@ -134,9 +134,37 @@ public sealed class ItemTagService
         return changed;
     }
 
+    /// <summary>
+    /// The items that carry a share's tag: the shared item itself and, when it is a
+    /// folder, everything under it.
+    /// </summary>
+    /// <remarks>
+    /// Never the parents. Jellyfin's <c>GetInheritedTags</c> is an item's own tags
+    /// plus every ancestor's, and the guest's AllowedTags policy is matched against
+    /// that, so tagging a season's parent series would hand the guest every other
+    /// season of that series as well.
+    /// </remarks>
     private static List<BaseItem> BuildTagTreeTargets(BaseItem item)
     {
         var targets = new List<BaseItem> { item };
+
+        if (item is Folder folder)
+        {
+            targets.AddRange(folder.GetRecursiveChildren());
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// Removal deliberately reaches one level further than tagging does: up to a
+    /// season's parent series. Builds before this fix put the share's tag on that
+    /// series, and taking a tag off can only ever remove access, so cleaning those
+    /// up is safe where applying them was not.
+    /// </summary>
+    private static List<BaseItem> BuildTagRemovalTargets(BaseItem item)
+    {
+        var targets = BuildTagTreeTargets(item);
 
         if (item is Season season)
         {
@@ -145,11 +173,6 @@ public sealed class ItemTagService
             {
                 targets.Add(series);
             }
-        }
-
-        if (item is Folder folder)
-        {
-            targets.AddRange(folder.GetRecursiveChildren());
         }
 
         return targets;

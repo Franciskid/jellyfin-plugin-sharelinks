@@ -37,12 +37,15 @@ real user or handing over a login that sees everything.
    watch at the same time, ten by default, and the eleventh is asked to try again
    later rather than displacing anyone.
 2. Behind the scenes the plugin tags the shared item with a unique, random tag
-   and records the share. Share a series or a season and the tag is applied to
-   the whole tree underneath it too - series, seasons and episodes - so the
-   guest can actually browse from the series page down into a season and an
-   episode, not just see a single locked node. Lookups only ever go through a
-   keyed HMAC hash of the token, and the link itself is dropped from the record
-   once it is revoked or expired.
+   and records the share. Share a series or a season and the tag goes on
+   everything underneath it as well, so the guest can browse down through what
+   you shared rather than seeing a single locked node. The tag never goes on
+   anything above it: Jellyfin treats a parent's tags as belonging to all of its
+   children, so tagging the series that a shared season sits in would hand over
+   every other season too. Share one season and that is all the guest gets, and
+   the series page is not theirs to open. Lookups only ever go through a keyed
+   HMAC hash of the token, and the link itself is dropped from the record once
+   it is revoked or expired.
 3. Whoever opens the link gets a throwaway guest user created on the spot,
    restricted by that tag to the shared item and its tree, and is signed in
    automatically. They land on the title's page.
@@ -63,7 +66,10 @@ server, not only in the browser:
 - On top of that, the web client is locked down for the guest: the home,
   menu and search buttons are hidden, in-page links (cast, studio, genres) are
   made inert, any attempt to navigate somewhere outside the shared tree snaps back
-  to the shared title.
+  to the shared title. Navigating down within what you shared works normally: a
+  shared series opens into its seasons and episodes, a shared season into its
+  episodes. Going up does not, so a guest sent one season cannot reach the series
+  it belongs to.
 
 Playback works normally, including transcoding and remuxing if you allow it, and
 the player's back button still returns them to the title's page.
