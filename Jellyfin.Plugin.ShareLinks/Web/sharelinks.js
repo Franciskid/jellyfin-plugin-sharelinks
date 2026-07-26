@@ -21,6 +21,8 @@
     var menuTriggerSelector = '[data-action="menu"], .btnMoreCommands, .btnCardOptions, .cardOverlayButton';
     var itemTypeCache = {};
     var itemTypeInFlight = {};
+    var shareTagPattern = /^sharelinks-[0-9a-f]{32}$/i;
+    var tagHiddenAttr = 'data-sharelinks-tag-hidden';
     var historyPatched = false;
     var itemMenuActionIds = [
         'resume', 'playallfromhere', 'queue', 'queuenext', 'shuffle', 'instantmix',
@@ -194,6 +196,7 @@
     async function refresh() {
         rememberAllowedItemFromRoute();
         await applyGuestLockdown();
+        await hideShareTagsFromNonAdmins();
         await scanForMoreMenuActions();
     }
 
@@ -587,6 +590,77 @@
                 delete itemTypeInFlight[id];
                 scheduleWork();
             });
+    }
+
+    /**
+     * The share tag has to sit in the item's real Tags for Jellyfin's own tag policy
+     * to confine the guest, which means every user would otherwise see a
+     * "sharelinks-..." chip on the title and an entry in the library's tag filter.
+     * Administrators keep seeing them; for everyone else they are taken back out of
+     * the DOM. This is the web UI only - the tag is still in the API payload.
+     */
+    async function hideShareTagsFromNonAdmins() {
+        var user = await getCurrentUser();
+        if (!user || isAdministrator(user)) {
+            return;
+        }
+
+        stripShareTagChips();
+        hideShareTagFilters();
+    }
+
+    function stripShareTagChips() {
+        Array.prototype.forEach.call(document.querySelectorAll('.itemTags'), function (container) {
+            var removed = 0;
+            Array.prototype.forEach.call(container.querySelectorAll('a'), function (chip) {
+                if (!shareTagPattern.test(normalizeText(chip.textContent))) {
+                    return;
+                }
+
+                removeChipSeparator(chip);
+                chip.remove();
+                removed += 1;
+            });
+
+            if (removed > 0 && !container.querySelector('a')) {
+                // Nothing but the "Tags:" prefix would be left over.
+                container.textContent = '';
+                container.classList.add('hide');
+            }
+        });
+    }
+
+    /** Drops the ", " text node Jellyfin puts between two tag chips. */
+    function removeChipSeparator(chip) {
+        var separator = /^\s*,\s*$/;
+        var next = chip.nextSibling;
+        if (next && next.nodeType === 3 && separator.test(next.nodeValue)) {
+            next.parentNode.removeChild(next);
+            return;
+        }
+
+        var previous = chip.previousSibling;
+        if (previous && previous.nodeType === 3 && separator.test(previous.nodeValue)) {
+            previous.parentNode.removeChild(previous);
+        }
+    }
+
+    function hideShareTagFilters() {
+        Array.prototype.forEach.call(document.querySelectorAll('.chkTagFilter'), function (input) {
+            if (input.getAttribute(tagHiddenAttr) === '1') {
+                return;
+            }
+
+            if (!shareTagPattern.test(String(input.getAttribute('data-filter') || ''))) {
+                return;
+            }
+
+            input.setAttribute(tagHiddenAttr, '1');
+            var row = input.closest('label') || input.parentElement;
+            if (row) {
+                row.style.setProperty('display', 'none', 'important');
+            }
+        });
     }
 
     function isCopyStreamUrlLabel(label) {
