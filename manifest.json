@@ -9,6 +9,14 @@
         "imageUrl": "",
         "versions": [
             {
+                "version": "1.0.3.1",
+                "changelog": "Fixes the viewer ceiling added in 1.0.3.0, which did the opposite of its job: reaching the limit destroyed the link and kicked out everyone already watching, because Jellyfin's own SecurityException type was not the one being caught. An over-the-ceiling viewer is now turned away before anything is written, and everyone already watching carries on undisturbed. Take this one if you use multi-use links.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.0.3.1/sharelinks_1.0.3.1.zip",
+                "checksum": "45ff791b37fec3dcce6de9f559fd69a9",
+                "timestamp": "2026-07-26T20:00:00Z"
+            },
+            {
                 "version": "1.0.3.0",
                 "changelog": "A link no longer has to die the moment the first person opens it. The create popup has a new \"Let several people use this link\" box: tick it and the link keeps working for everyone you send it to until it expires. It is a per-link choice now, and the old plugin setting is just what the box starts out as. Multi-use links have a ceiling on how many people can watch at once, ten by default and configurable; anyone arriving after that is asked to try again later and nobody already watching is disturbed. Multi-use did not actually work before this release: guests were capped at one session, so the second viewer's redemption failed and cleanup then deleted the guest account out from under the first viewer.",
                 "targetAbi": "10.11.0.0",
