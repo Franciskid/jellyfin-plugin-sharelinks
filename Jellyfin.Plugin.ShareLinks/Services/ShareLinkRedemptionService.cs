@@ -117,7 +117,11 @@ public sealed class ShareLinkRedemptionService
             record.MetadataTouched = true;
         }
 
-        if (string.IsNullOrWhiteSpace(record.DeviceId))
+        // Jellyfin logs out any existing session for the same user and device id,
+        // so every viewer of a multi-use link needs a device id of their own or
+        // each new arrival would kick the previous one off. A one-use link has a
+        // single viewer and keeps a stable id.
+        if (!record.OneUse || string.IsNullOrWhiteSpace(record.DeviceId))
         {
             record.DeviceId = Guid.NewGuid().ToString("N");
         }

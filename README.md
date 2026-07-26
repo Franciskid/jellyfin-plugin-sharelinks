@@ -30,7 +30,10 @@ real user or handing over a login that sees everything.
 
 1. As an admin you open the context menu on a movie, episode, series or season
    and hit **ShareLink**. You choose an expiry (1 hour up to 30 days) and the
-   plugin hands you a link, copied to your clipboard.
+   plugin hands you a link, copied to your clipboard. You also choose there
+   whether the link is single use, which is the default and stops working once
+   the first person opens it, or multi-use, which lets everyone you send it to
+   open it until it expires.
 2. Behind the scenes the plugin tags the shared item with a unique, random tag
    and records the share. Share a series or a season and the tag is applied to
    the whole tree underneath it too - series, seasons and episodes - so the
@@ -125,7 +128,7 @@ All of these live on the plugin's dashboard page:
 | Guest username prefix | Prefix for the throwaway guest accounts (default `share-`) |
 | Allow transcoding / remuxing | Whether guest playback may transcode or remux |
 | Cleanup interval | How often the background cleanup runs |
-| One-use default | Whether new links default to single redemption |
+| Single use by default | How the single-use box starts out in the create popup; it is a per-link choice |
 | Guest lockdown | The web-client confinement described above (on by default) |
 | Guest hidden selectors | CSS selectors hidden from guests, to suppress other plugins' UI |
 
