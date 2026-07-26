@@ -29,7 +29,7 @@ real user or handing over a login that sees everything.
 ## How it works
 
 1. As an admin you open the context menu on a movie, episode, series or season
-   and hit **ShareLink**. You choose an expiry (1 hour up to 30 days) and the
+   and hit **ShareLink**. You choose an expiry (1 hour up to 7 days) and the
    plugin hands you a link, copied to your clipboard. You also choose there
    whether the link is single use, which is the default and stops working once
    the first person opens it, or multi-use, which lets everyone you send it to
@@ -196,5 +196,5 @@ Licensed under the [GPL-3.0](LICENSE), like most Jellyfin plugins.
 
 ## Images
 
-<img width="590" height="427" alt="image" src="https://github.com/user-attachments/assets/1ae3c28a-644e-4c9f-824a-07b800aa5eff" />
+<img width="566" height="521" alt="image" src="https://github.com/user-attachments/assets/754f3daa-80ee-4209-9d09-467940140f81" />
 
