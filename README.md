@@ -23,7 +23,7 @@ real user or handing over a login that sees everything.
 
 ---
 
-<img width="1476" height="784" alt="image" src="https://github.com/user-attachments/assets/841f24f8-8b0f-4fd0-a8f8-890ff80faa2f" />
+<img width="1505" height="820" alt="image" src="https://github.com/user-attachments/assets/27296f27-9a37-4870-90aa-df8b6d9e9f43" />
 
 
 ## How it works
@@ -62,16 +62,15 @@ server, not only in the browser:
   Even someone poking at the raw API cannot list your other content.
 - On top of that, the web client is locked down for the guest: the home,
   menu and search buttons are hidden, in-page links (cast, studio, genres) are
-  made inert, "add to playlist" is removed, and any attempt to navigate
-  somewhere outside the shared tree snaps back to the shared title. Navigating
-  within the tree - series to season to episode - works normally.
+  made inert, any attempt to navigate somewhere outside the shared tree snaps back
+  to the shared title.
 
 Playback works normally, including transcoding and remuxing if you allow it, and
 the player's back button still returns them to the title's page.
 
 One honest caveat: if you share a series or season and new episodes get added
 to it later, those episodes only pick up the tag (and become visible to the
-guest) the next time the link is redeemed - not the instant they are added. For
+guest) the next time the link is redeemed : not the instant they are added. For
 a one-use link that has already been redeemed, that never happens, so a
 one-use link is a snapshot of the tree as it existed at redemption time.
 
@@ -79,7 +78,7 @@ one-use link is a snapshot of the tree as it existed at redemption time.
 
 The plugin's dashboard page lists every share with its status, the title, a
 copyable link, the temporary guest name, and an expiry, and lets you revoke any
-of them on the spot. Revoking runs the same teardown as expiry: guest gone, tag
+of them on the spot. Revoking runs the same teardown as expiry: guest gone and tag
 gone.
 
 ## Hiding other plugins from guests
@@ -107,7 +106,9 @@ up the link. So:
 4. token validation is a hash comparison
 5. guest-user creation and teardown live behind explicit service calls
 6. the real access boundary is the server-side tag policy; the web-client
-   lockdown is convenience on top of it
+   lockdown is convenience on top of it. So even if someone somehow managed
+   to connect with the guest account normally, they would only see the shared
+   content through its tags. So no risk that anyone sees your entire library.
 
 The same applies to the guest's login. The plugin mints the guest session itself
 on the server, using Jellyfin's own session manager. No password is ever stored
@@ -135,7 +136,7 @@ itself as the secret. Within that:
   watched state on that title, and they can see each other's sessions in Jellyfin.
   If that matters to you, use single-use links.
 - Reaching the ceiling turns the new arrival away with a "try again" page. It does
-  not disturb anyone already watching, and it does not kill the link.
+  not disturb anyone already watching.
 
 ### Known limits
 
@@ -143,7 +144,7 @@ itself as the secret. Within that:
   reverse proxy's access log and in browser history.
 - Redeeming is a public endpoint with no rate limit. Tokens are 256-bit random, so
   guessing one is not realistic, but the endpoint is reachable by anyone.
-- Records are kept after they expire, for audit, and are never pruned.
+- Records are kept after they expire, for audit, and are never pruned automatically (you can do so manually though.
 - The `sharelinks-` tag is hidden from non-admins in the web client only. It is
   still present in the API response for anyone who looks, because that tag is what
   confines the guest and it cannot be removed without removing the confinement.
