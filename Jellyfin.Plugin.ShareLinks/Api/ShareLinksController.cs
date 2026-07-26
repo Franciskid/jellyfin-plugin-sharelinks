@@ -269,6 +269,21 @@ public sealed class ShareLinksController : ControllerBase
         return Ok(ToDto(record));
     }
 
+    /// <summary>Removes revoked, expired and failed share links from the store.</summary>
+    [HttpPost("Admin/Cleanup")]
+    [Authorize(AuthenticationSchemes = "CustomAuthentication")]
+    public async Task<ActionResult> Cleanup(CancellationToken cancellationToken)
+    {
+        SetNoStoreHeaders();
+        if (!User.IsInRole("Administrator"))
+        {
+            return Forbid();
+        }
+
+        var removed = await _cleanupService.PurgeFinishedAsync(cancellationToken).ConfigureAwait(false);
+        return Ok(new { removed });
+    }
+
     /// <summary>Returns the guest session state for the current authenticated user.</summary>
     [HttpGet("GuestState")]
     [Authorize(AuthenticationSchemes = "CustomAuthentication")]

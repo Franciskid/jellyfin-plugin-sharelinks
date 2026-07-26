@@ -173,6 +173,9 @@
                         <button is="emby-button" type="button" id="RefreshLinks" class="raised">
                             <span>Refresh</span>
                         </button>
+                        <button is="emby-button" type="button" id="CleanupLinks" class="raised">
+                            <span>Clean up finished links</span>
+                        </button>
                         <span id="LinksStatus" class="sl-muted sl-list-status">Loading…</span>
                     </div>
                     <div style="overflow-x:auto; margin-top:0.5rem;">
@@ -425,6 +428,30 @@
             document.querySelector('#ShareLinksConfigForm').addEventListener('submit', save);
             document.querySelector('#RefreshLinks').addEventListener('click', function () {
                 loadLinks();
+            });
+
+            document.querySelector('#CleanupLinks').addEventListener('click', function () {
+                var button = page.querySelector('#CleanupLinks');
+                var status = page.querySelector('#LinksStatus');
+                button.disabled = true;
+                status.textContent = 'Cleaning up…';
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('ShareLinks/Admin/Cleanup'),
+                    dataType: 'json'
+                }).then(function (result) {
+                    var removed = result && (result.removed !== undefined ? result.removed : result.Removed);
+                    removed = parseInt(removed, 10) || 0;
+                    return loadLinks().then(function () {
+                        page.querySelector('#LinksStatus').textContent = removed === 1
+                            ? '1 finished link removed.'
+                            : removed + ' finished links removed.';
+                    });
+                }).catch(function () {
+                    status.textContent = 'Cleanup failed.';
+                }).finally(function () {
+                    button.disabled = false;
+                });
             });
         })();
     </script>
