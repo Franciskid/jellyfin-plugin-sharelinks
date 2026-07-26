@@ -124,12 +124,34 @@ public sealed class ShareTokenService
             RandomNumberGenerator.Fill(generated);
             Directory.CreateDirectory(Path.GetDirectoryName(_secretPath)!);
             await File.WriteAllTextAsync(_secretPath, Base64UrlEncode(generated), cancellationToken).ConfigureAwait(false);
+            RestrictToOwner(_secretPath);
             _secretKey = generated;
             return _secretKey;
         }
         finally
         {
             _secretGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Keeps the HMAC key readable by the server account only. Best effort: a
+    /// no-op on platforms without Unix file modes.
+    /// </summary>
+    private void RestrictToOwner(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "ShareLinks: could not restrict permissions on the token secret file.");
         }
     }
 

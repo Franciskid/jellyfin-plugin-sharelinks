@@ -189,10 +189,10 @@ public sealed class ShareLinksController : ControllerBase
             return BadRequest(new { error = "Expiry must be positive." });
         }
 
-        var effectiveMaxExpiryHours = Math.Max(config.MaxExpiryHours, 720);
-        if (expiryHours > effectiveMaxExpiryHours)
+        var maxExpiryHours = config.MaxExpiryHours > 0 ? config.MaxExpiryHours : 720;
+        if (expiryHours > maxExpiryHours)
         {
-            return BadRequest(new { error = $"Expiry exceeds the configured maximum of {effectiveMaxExpiryHours} hours." });
+            return BadRequest(new { error = $"Expiry exceeds the configured maximum of {maxExpiryHours} hours." });
         }
 
         var item = _libraryManager.GetItemById(itemId);

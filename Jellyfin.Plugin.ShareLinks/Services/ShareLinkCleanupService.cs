@@ -100,6 +100,12 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
             return record;
         }
 
+        // The share URL carries the raw token, and it is kept on the record only so
+        // the dashboard can offer "copy" while the link is still usable. Once the
+        // link is torn down the token is dead weight, so drop it rather than leave
+        // it sitting in the store for good.
+        record.ShareUrl = null;
+
         var errors = new List<string>();
         try
         {

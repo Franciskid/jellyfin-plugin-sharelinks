@@ -24,6 +24,7 @@ public sealed class ShareLinkRedemptionService
     private readonly ShareLinkCleanupService _cleanupService;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<ShareLinkRedemptionService> _logger;
+    private readonly SemaphoreSlim _redeemGate = new(1, 1);
 
     /// <summary>Initializes a new instance of the <see cref="ShareLinkRedemptionService"/> class.</summary>
     public ShareLinkRedemptionService(
@@ -49,6 +50,23 @@ public sealed class ShareLinkRedemptionService
     /// <summary>Redeems a token and returns the bootstrap HTML, or null if the token is unusable.</summary>
     public async Task<string?> RedeemAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
     {
+        // One redemption at a time: the status checks below and the status write
+        // that follows them are not atomic, so two requests arriving together with
+        // the same one-use token would otherwise both mint a guest session.
+        await _redeemGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await RedeemInternalAsync(rawToken, request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _redeemGate.Release();
+        }
+    }
+
+    /// <summary>Runs a single redemption; callers must hold the redemption gate.</summary>
+    private async Task<string?> RedeemInternalAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
+    {
         var tokenHash = await _tokenService.HashTokenAsync(rawToken, cancellationToken).ConfigureAwait(false);
         if (tokenHash is null)
         {
@@ -73,6 +91,13 @@ public sealed class ShareLinkRedemptionService
             return null;
         }
 
+        // Checked before any library write: re-tagging the whole tree on every hit
+        // to an already-spent link would be a pointless metadata write storm.
+        if (record.OneUse && record.Status == ShareLinkStatus.Redeemed)
+        {
+            return null;
+        }
+
         if (!Guid.TryParse(record.ItemId, out var itemId))
         {
             await HandleFailureAsync(record, "Shared item snapshot is invalid.", cancellationToken).ConfigureAwait(false);
@@ -90,11 +115,6 @@ public sealed class ShareLinkRedemptionService
         {
             await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
             record.MetadataTouched = true;
-        }
-
-        if (record.OneUse && record.Status == ShareLinkStatus.Redeemed)
-        {
-            return null;
         }
 
         if (string.IsNullOrWhiteSpace(record.DeviceId))
