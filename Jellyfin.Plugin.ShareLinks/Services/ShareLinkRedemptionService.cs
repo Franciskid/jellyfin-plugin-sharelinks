@@ -1,4 +1,5 @@
 using System;
+using System.Security;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,19 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.ShareLinks.Services;
+
+/// <summary>Outcome of a redemption attempt.</summary>
+public sealed class ShareLinkRedemptionResult
+{
+    /// <summary>Gets the bootstrap HTML when a session was minted, otherwise null.</summary>
+    public string? Html { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the link is valid but already has as many
+    /// viewers as it is allowed to have.
+    /// </summary>
+    public bool AtCapacity { get; init; }
+}
 
 /// <summary>Handles public share-link redemption and the bootstrap HTML response.</summary>
 public sealed class ShareLinkRedemptionService
@@ -47,8 +61,8 @@ public sealed class ShareLinkRedemptionService
         _logger = logger;
     }
 
-    /// <summary>Redeems a token and returns the bootstrap HTML, or null if the token is unusable.</summary>
-    public async Task<string?> RedeemAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
+    /// <summary>Redeems a token and returns the redemption result.</summary>
+    public async Task<ShareLinkRedemptionResult> RedeemAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
     {
         // One redemption at a time: the status checks below and the status write
         // that follows them are not atomic, so two requests arriving together with
@@ -65,50 +79,50 @@ public sealed class ShareLinkRedemptionService
     }
 
     /// <summary>Runs a single redemption; callers must hold the redemption gate.</summary>
-    private async Task<string?> RedeemInternalAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
+    private async Task<ShareLinkRedemptionResult> RedeemInternalAsync(string rawToken, HttpRequest request, CancellationToken cancellationToken)
     {
         var tokenHash = await _tokenService.HashTokenAsync(rawToken, cancellationToken).ConfigureAwait(false);
         if (tokenHash is null)
         {
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         var record = await _store.GetByTokenHashAsync(tokenHash, cancellationToken).ConfigureAwait(false);
         if (record is null)
         {
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         var now = DateTimeOffset.UtcNow;
         if (record.ExpiresAtUtc <= now)
         {
             await HandleTerminalRecordAsync(record, ShareLinkStatus.Expired, "Share link has expired.", cancellationToken).ConfigureAwait(false);
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         if (record.Status == ShareLinkStatus.Revoked || record.Status == ShareLinkStatus.Failed)
         {
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         // Checked before any library write: re-tagging the whole tree on every hit
         // to an already-spent link would be a pointless metadata write storm.
         if (record.OneUse && record.Status == ShareLinkStatus.Redeemed)
         {
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         if (!Guid.TryParse(record.ItemId, out var itemId))
         {
             await HandleFailureAsync(record, "Shared item snapshot is invalid.", cancellationToken).ConfigureAwait(false);
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         var item = _libraryManager.GetItemById(itemId);
         if (item is null)
         {
             await HandleFailureAsync(record, "Shared item no longer exists.", cancellationToken).ConfigureAwait(false);
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
         if (!string.IsNullOrWhiteSpace(record.AllowedTag))
@@ -117,7 +131,11 @@ public sealed class ShareLinkRedemptionService
             record.MetadataTouched = true;
         }
 
-        if (string.IsNullOrWhiteSpace(record.DeviceId))
+        // Jellyfin logs out any existing session for the same user and device id,
+        // so every viewer of a multi-use link needs a device id of their own or
+        // each new arrival would kick the previous one off. A one-use link has a
+        // single viewer and keeps a stable id.
+        if (!record.OneUse || string.IsNullOrWhiteSpace(record.DeviceId))
         {
             record.DeviceId = Guid.NewGuid().ToString("N");
         }
@@ -158,6 +176,17 @@ public sealed class ShareLinkRedemptionService
             record.CleanupError = null;
             await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
         }
+        catch (SecurityException ex)
+        {
+            // The link is fine, the guest account has simply reached its viewer
+            // ceiling. Leave the record and the guest alone: marking this failed
+            // would tear down the account and throw out everyone already watching.
+            record.Status = record.RedeemedAtUtc.HasValue ? ShareLinkStatus.Redeemed : ShareLinkStatus.Active;
+            record.CleanupError = null;
+            await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation(ex, "ShareLinks: record {RecordId} is at its viewer ceiling; turning a viewer away.", record.Id);
+            return new ShareLinkRedemptionResult { AtCapacity = true };
+        }
         catch (Exception ex)
         {
             record.Status = ShareLinkStatus.Failed;
@@ -165,10 +194,10 @@ public sealed class ShareLinkRedemptionService
             await _store.UpdateAsync(record, cancellationToken).ConfigureAwait(false);
             _logger.LogWarning(ex, "ShareLinks: failed to prepare guest session for record {RecordId}.", record.Id);
             await TryCleanupAsync(record, cancellationToken).ConfigureAwait(false);
-            return null;
+            return new ShareLinkRedemptionResult();
         }
 
-        return BuildBootstrapHtml(request, authResult, itemId);
+        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, itemId) };
     }
 
     private async Task HandleTerminalRecordAsync(ShareLinkRecord record, ShareLinkStatus terminalStatus, string reason, CancellationToken cancellationToken)

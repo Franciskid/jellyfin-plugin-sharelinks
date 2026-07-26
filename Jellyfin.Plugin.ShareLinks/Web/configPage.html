@@ -101,8 +101,14 @@
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="OneUseDefault" />
-                                <span>Default one-use links</span>
+                                <span>New links are single use by default</span>
                             </label>
+                            <div class="fieldDescription checkboxFieldDescription">This only decides how the "Let several people use this link" box starts out in the create popup; you can change it for every link you make. A single-use link stops working the moment the first person opens it, and only that person keeps access until it expires. A multi-use link can be opened by everyone you send it to, for as long as it is valid.</div>
+                        </div>
+
+                        <div class="sl-field inputContainer">
+                            <input is="emby-input" type="number" id="MaxConcurrentViewers" label="Maximum viewers per multi-use link" min="0" max="500" />
+                            <div class="fieldDescription">How many people may watch a multi-use link at the same time. 0 means no limit. Someone arriving once the limit is reached is asked to try again later; nobody already watching is disturbed. Single-use links are always one viewer.</div>
                         </div>
 
                         <div class="sl-field inputContainer">
@@ -217,6 +223,7 @@
                     page.querySelector('#AllowRemuxing').checked = cfg.AllowRemuxing !== false;
                     page.querySelector('#CleanupIntervalMinutes').value = cfg.CleanupIntervalMinutes || 60;
                     page.querySelector('#OneUseDefault').checked = cfg.OneUseDefault !== false;
+                    page.querySelector('#MaxConcurrentViewers').value = cfg.MaxConcurrentViewers === undefined ? 10 : cfg.MaxConcurrentViewers;
                     page.querySelector('#GuestModeLockdownEnabled').checked = cfg.GuestModeLockdownEnabled !== false;
                 }).finally(function () {
                     Dashboard.hideLoadingMsg();
@@ -398,6 +405,7 @@
                     cfg.AllowRemuxing = page.querySelector('#AllowRemuxing').checked;
                     cfg.CleanupIntervalMinutes = parseInt(page.querySelector('#CleanupIntervalMinutes').value, 10) || 60;
                     cfg.OneUseDefault = page.querySelector('#OneUseDefault').checked;
+                    cfg.MaxConcurrentViewers = Math.max(parseInt(page.querySelector('#MaxConcurrentViewers').value, 10) || 0, 0);
                     cfg.GuestModeLockdownEnabled = page.querySelector('#GuestModeLockdownEnabled').checked;
                     ApiClient.updatePluginConfiguration(ShareLinksPluginId, cfg).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);

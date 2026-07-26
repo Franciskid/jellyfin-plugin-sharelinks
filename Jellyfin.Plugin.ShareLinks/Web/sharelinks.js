@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.2-ui-3';
+    var clientVersion = '1.0.3-ui-2';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -65,6 +65,10 @@
             pickDateFirst: 'Pick a date and time first.',
             dateInvalid: 'That date is not valid.',
             pickFuture: 'Pick a time in the future.',
+            multiUseLabel: 'Let several people use this link',
+            multiUseHint: 'The link keeps working for anyone you send it to until it expires, instead of dying once the first person opens it.',
+            multiUseLimit: 'Up to {count} of them can watch at the same time.',
+            resultMultiUseNote: 'Anyone you send this link to can open it until it expires.',
             cannotDetermineItem: 'Could not determine which item to share. Open the item page and retry.',
             adminOnly: 'ShareLinks is available to administrators only.',
             disabled: 'ShareLinks is disabled.',
@@ -89,6 +93,10 @@
             pickDateFirst: 'Choisissez d\'abord une date et une heure.',
             dateInvalid: 'Cette date n\'est pas valide.',
             pickFuture: 'Choisissez une date dans le futur.',
+            multiUseLabel: 'Autoriser plusieurs personnes à utiliser ce lien',
+            multiUseHint: 'Le lien reste valable pour toutes les personnes à qui vous l\'envoyez jusqu\'à son expiration, au lieu de mourir dès la première ouverture.',
+            multiUseLimit: 'Jusqu\'a {count} d\'entre elles peuvent regarder en meme temps.',
+            resultMultiUseNote: 'Toutes les personnes à qui vous envoyez ce lien peuvent l\'ouvrir jusqu\'à son expiration.',
             cannotDetermineItem: 'Impossible de déterminer l\'élément à partager. Ouvrez la page du média et réessayez.',
             adminOnly: 'ShareLinks est réservé aux administrateurs.',
             disabled: 'ShareLinks est désactivé.',
@@ -1063,11 +1071,11 @@
                 return;
             }
 
-            var result = await chooseExpiryHours(config, function (expiryHours) {
+            var result = await chooseExpiryHours(config, function (expiryHours, multiUse) {
                 var payload = {
                     itemId: itemId,
                     expiryHours: expiryHours,
-                    oneUse: config && config.OneUseDefault !== undefined ? !!config.OneUseDefault : true
+                    oneUse: !multiUse
                 };
 
                 var shareUrlPromise = apiPost('ShareLinks/Admin/Create', payload).then(function (response) {
@@ -1086,7 +1094,8 @@
                     }).then(function (copied) {
                         return {
                             shareUrl: shareUrl,
-                            copied: copied
+                            copied: copied,
+                            multiUse: !!multiUse
                         };
                     });
                 });
@@ -1095,7 +1104,7 @@
                 return;
             }
 
-            showShareResult(result.shareUrl, result.copied);
+            showShareResult(result.shareUrl, result.copied, result.multiUse);
         } catch (error) {
             notify(extractErrorMessage(error, t('couldNotCreate')));
         }
@@ -1134,6 +1143,11 @@
             options: options,
             onChoose: onChoose,
             cancelText: t('cancel'),
+            toggle: {
+                label: t('multiUseLabel'),
+                hint: buildMultiUseHint(config),
+                checked: !(config && config.OneUseDefault !== false)
+            },
             datePicker: {
                 min: toLocalDatetimeValue(minDate),
                 max: toLocalDatetimeValue(maxDate),
@@ -1141,6 +1155,16 @@
                 maxHours: maxHours
             }
         });
+    }
+
+    function buildMultiUseHint(config) {
+        var hint = t('multiUseHint');
+        var limit = config ? parseInt(config.MaxConcurrentViewers, 10) : NaN;
+        if (Number.isFinite(limit) && limit > 0) {
+            hint += ' ' + t('multiUseLimit').replace('{count}', limit);
+        }
+
+        return hint;
     }
 
     function copyTextWhenReady(textPromise) {
@@ -1193,7 +1217,7 @@
         }, 3600);
     }
 
-    function showShareResult(shareUrl, copied) {
+    function showShareResult(shareUrl, copied, multiUse) {
         ensureShareLinksUi();
         var body = document.createElement('div');
         var note = document.createElement('p');
@@ -1202,6 +1226,13 @@
             ? t('copiedNote')
             : t('notCopiedNote');
         body.appendChild(note);
+
+        if (multiUse) {
+            var multiUseNote = document.createElement('p');
+            multiUseNote.className = 'sharelinks-note';
+            multiUseNote.textContent = t('resultMultiUseNote');
+            body.appendChild(multiUseNote);
+        }
 
         var urlBox = document.createElement('textarea');
         urlBox.className = 'sharelinks-url';
@@ -1276,6 +1307,40 @@
             body.appendChild(dateRow);
         }
 
+        var toggleInput = null;
+        if (settings.toggle) {
+            var toggleRow = document.createElement('label');
+            toggleRow.className = 'sharelinks-toggle-row';
+
+            toggleInput = document.createElement('input');
+            toggleInput.type = 'checkbox';
+            toggleInput.className = 'sharelinks-toggle-input';
+            toggleInput.checked = !!settings.toggle.checked;
+
+            var toggleText = document.createElement('span');
+            toggleText.className = 'sharelinks-toggle-text';
+
+            var toggleLabel = document.createElement('span');
+            toggleLabel.className = 'sharelinks-toggle-label';
+            toggleLabel.textContent = settings.toggle.label;
+            toggleText.appendChild(toggleLabel);
+
+            if (settings.toggle.hint) {
+                var toggleHint = document.createElement('span');
+                toggleHint.className = 'sharelinks-toggle-hint';
+                toggleHint.textContent = settings.toggle.hint;
+                toggleText.appendChild(toggleHint);
+            }
+
+            toggleRow.appendChild(toggleInput);
+            toggleRow.appendChild(toggleText);
+            body.appendChild(toggleRow);
+        }
+
+        function toggleChecked() {
+            return !!(toggleInput && toggleInput.checked);
+        }
+
         return new Promise(function (resolve) {
             var modal;
             var actions = [];
@@ -1310,7 +1375,7 @@
                         if (modal) {
                             modal.close();
                         }
-                        resolve(settings.onChoose ? settings.onChoose(hours) : hours);
+                        resolve(settings.onChoose ? settings.onChoose(hours, toggleChecked()) : hours);
                     }
                 });
             }
@@ -1341,7 +1406,7 @@
                 button.addEventListener('click', function () {
                     modal.close();
                     if (settings.onChoose) {
-                        resolve(settings.onChoose(option.hours));
+                        resolve(settings.onChoose(option.hours, toggleChecked()));
                     } else {
                         resolve(option.hours);
                     }
@@ -1459,6 +1524,11 @@
             '.sharelinks-date-row{margin-top:18px;display:flex;flex-direction:column;gap:8px;}',
             '.sharelinks-date-label{color:var(--text-secondary-color,#cfcfcf);font-size:.92rem;line-height:1.4;}',
             '.sharelinks-date-input{width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.2);border-radius:6px;background:rgba(0,0,0,.18);color:inherit;padding:10px 12px;min-height:42px;font:inherit;color-scheme:dark;}',
+            '.sharelinks-toggle-row{display:flex;align-items:flex-start;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.12);cursor:pointer;}',
+            '.sharelinks-toggle-input{margin:2px 0 0;width:18px;height:18px;flex:0 0 auto;accent-color:var(--theme-primary-color,#00a4dc);cursor:pointer;}',
+            '.sharelinks-toggle-text{display:flex;flex-direction:column;gap:4px;}',
+            '.sharelinks-toggle-label{line-height:1.35;}',
+            '.sharelinks-toggle-hint{color:var(--text-secondary-color,#cfcfcf);font-size:.88rem;line-height:1.4;}',
             '.sharelinks-toast{position:fixed;left:24px;bottom:24px;z-index:1000000;max-width:min(460px,calc(100vw - 48px));background:rgba(24,24,24,.96);color:#fff;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:11px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease;}',
             '.sharelinks-toast.is-visible{opacity:1;transform:translateY(0);}',
             '@media (max-width:520px){.sharelinks-duration-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.sharelinks-dialog{padding:18px;}.sharelinks-actions{justify-content:stretch;}.sharelinks-action{flex:1;}}'
