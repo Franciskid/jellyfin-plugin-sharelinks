@@ -600,8 +600,10 @@
      * the DOM. This is the web UI only - the tag is still in the API payload.
      */
     async function hideShareTagsFromNonAdmins() {
+        // Deliberately only skipped for a confirmed administrator. If the lookup
+        // failed we do not know who this is, and the safe answer is to hide.
         var user = await getCurrentUser();
-        if (!user || isAdministrator(user)) {
+        if (isAdministrator(user)) {
             return;
         }
 
