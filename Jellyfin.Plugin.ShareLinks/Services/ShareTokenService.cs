@@ -111,6 +111,9 @@ public sealed class ShareTokenService
                     _secretKey = Base64UrlDecode(secretText.Trim());
                     if (_secretKey.Length >= 16)
                     {
+                        // Also applied on load so a key written by an older build
+                        // stops being world readable.
+                        RestrictToOwner(_secretPath);
                         return _secretKey;
                     }
                 }
