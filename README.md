@@ -6,9 +6,11 @@ them an account, without them seeing the rest of your library.
 > *"here, watch this one film, the link dies tomorrow"*
 
 ShareLinks adds a **ShareLink** button (with a little share icon) to the context
-menu of any movie, episode, series or season in the Jellyfin web client. Click
-it, pick how long the link should live, and you get a URL you can send to
-anyone. When they open it, they land straight on that title, already signed in,
+menu of any movie, episode, series or season in the Jellyfin web client. It sits
+in its own section at the bottom of the menu, and it only shows up for those four
+kinds of item, never for a cast member, a studio, a library or anything else you
+cannot actually watch. Click it, pick how long the link should live, and you get
+a URL you can send to anyone. When they open it, they land straight on that title, already signed in,
 and they cannot wander off into the rest of your server.
 
 No account for them to create, no password for you to hand out, no permanent
