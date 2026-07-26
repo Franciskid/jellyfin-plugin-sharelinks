@@ -107,7 +107,10 @@ on the server, using Jellyfin's own session manager. No password is ever stored
 anywhere, not even encrypted, and no password ever appears in the page sent to
 the guest. The only thing the guest's browser receives is a session token
 scoped to that one guest account, and that token dies the moment the guest
-account is cleaned up.
+account is cleaned up. On top of that, the guest account is assigned an authentication provider that
+refuses every interactive sign-in, so the normal login page cannot be used to get
+into a guest account at all, password or not. If the plugin is disabled Jellyfin
+falls back to its own invalid-provider handling, which refuses too.
 
 ## Configuration
 

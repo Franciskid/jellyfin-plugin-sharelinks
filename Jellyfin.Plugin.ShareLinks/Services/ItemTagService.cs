@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.ShareLinks.Services;
@@ -157,46 +157,7 @@ public sealed class ItemTagService
 
     private async Task PersistAsync(BaseItem item, CancellationToken cancellationToken)
     {
-        var method = _libraryManager.GetType()
-            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
-            .FirstOrDefault(candidate =>
-            {
-                if (!string.Equals(candidate.Name, "UpdateItemAsync", StringComparison.Ordinal))
-                {
-                    return false;
-                }
-
-                var parameters = candidate.GetParameters();
-                return parameters.Length == 4
-                    && typeof(BaseItem).IsAssignableFrom(parameters[0].ParameterType)
-                    && typeof(BaseItem).IsAssignableFrom(parameters[1].ParameterType)
-                    && parameters[3].ParameterType == typeof(CancellationToken);
-            });
-
-        if (method is null)
-        {
-            throw new MissingMethodException(_libraryManager.GetType().FullName, "UpdateItemAsync");
-        }
-
-        var parametersInfo = method.GetParameters();
-        var updateReason = parametersInfo[2].ParameterType.IsEnum
-            ? Enum.ToObject(parametersInfo[2].ParameterType, 0)
-            : 0;
-
         var parent = item.DisplayParent ?? item;
-        var task = method.Invoke(_libraryManager, new object?[]
-        {
-            item,
-            parent,
-            updateReason,
-            cancellationToken
-        }) as Task;
-
-        if (task is null)
-        {
-            throw new InvalidOperationException("UpdateItemAsync did not return a task.");
-        }
-
-        await task.ConfigureAwait(false);
+        await _libraryManager.UpdateItemAsync(item, parent, ItemUpdateType.None, cancellationToken).ConfigureAwait(false);
     }
 }

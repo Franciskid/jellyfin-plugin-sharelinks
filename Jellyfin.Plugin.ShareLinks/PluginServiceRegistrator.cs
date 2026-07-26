@@ -3,6 +3,7 @@ using Jellyfin.Plugin.ShareLinks.Services;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using Jellyfin.Plugin.ShareLinks.Web;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -24,6 +25,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ShareTokenService>();
         serviceCollection.AddSingleton<ItemTagService>();
         serviceCollection.AddSingleton<JellyfinGuestUserService>();
+        serviceCollection.AddSingleton<IAuthenticationProvider, GuestAuthenticationProvider>();
         serviceCollection.AddSingleton<ShareLinkCreationService>();
         serviceCollection.AddSingleton<ShareLinkRedemptionService>();
         serviceCollection.AddSingleton<ShareLinkCleanupService>();
