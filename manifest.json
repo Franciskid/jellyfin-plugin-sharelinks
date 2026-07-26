@@ -9,6 +9,14 @@
         "imageUrl": "",
         "versions": [
             {
+                "version": "1.0.2.0",
+                "changelog": "The ShareLink button now sits in its own section at the bottom of the item menu, and only appears for a movie, series, season or episode instead of turning up on things like a cast member. It is properly admin only again: the current user was cached for the whole page, so switching accounts in the same tab could leave the button visible to a normal user (the server always refused them). Share tags are hidden from everyone except admins, on the title and in the tag filter. Security: one-use links can no longer be redeemed twice, the configured maximum expiry is respected, the raw token is dropped from storage when a link dies, the token secret file is 0600, guest accounts can no longer sign in from the login page at all, and the runtime reflection shims around Jellyfin's APIs are gone.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.0.2.0/sharelinks_1.0.2.0.zip",
+                "checksum": "cebff42d9ec45f6add7b03bb7a0aaca5",
+                "timestamp": "2026-07-26T18:45:00Z"
+            },
+            {
                 "version": "1.0.1.0",
                 "changelog": "Series and seasons can now be shared, not just single movies and episodes: the share tags the whole tree so the guest can browse and play everything inside it, and cleanup strips it all again. Expired or invalid links now show a friendly page that redirects to the Jellyfin home instead of raw JSON. The guest hidden selectors setting now defaults to empty.",
                 "targetAbi": "10.11.0.0",
