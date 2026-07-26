@@ -1111,14 +1111,15 @@
     }
 
     function chooseExpiryHours(config, onChoose) {
-        var options = durationOptions.map(function (option) {
+        var maxHours = clampPositiveInteger(config && config.MaxExpiryHours, 720);
+        var options = durationOptions.filter(function (option) {
+            return option.hours <= maxHours;
+        }).map(function (option) {
             return {
                 label: durationLabel(option.hours),
                 hours: option.hours
             };
         });
-
-        var maxHours = Math.max(clampPositiveInteger(config && config.MaxExpiryHours, 720), 720);
         var nowMs = Date.now();
         var minDate = new Date(nowMs + 5 * 60000);
         var maxDate = new Date(nowMs + maxHours * 3600000);

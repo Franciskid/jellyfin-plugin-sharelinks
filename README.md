@@ -35,8 +35,9 @@ real user or handing over a login that sees everything.
    and records the share. Share a series or a season and the tag is applied to
    the whole tree underneath it too - series, seasons and episodes - so the
    guest can actually browse from the series page down into a season and an
-   episode, not just see a single locked node. The raw link token is shown to
-   you once and never stored, only a keyed HMAC hash of it is kept.
+   episode, not just see a single locked node. Lookups only ever go through a
+   keyed HMAC hash of the token, and the link itself is dropped from the record
+   once it is revoked or expired.
 3. Whoever opens the link gets a throwaway guest user created on the spot,
    restricted by that tag to the shared item and its tree, and is signed in
    automatically. They land on the title's page.
@@ -94,8 +95,10 @@ only a keyed HMAC hash of the token plus the metadata needed to audit and clean
 up the link. So:
 
 1. raw tokens are never logged
-2. raw tokens are never written to disk
-3. the token is only returned in the creation response
+2. only the token's HMAC hash is used to look a link up
+3. the finished share URL is kept on the record while the link is live, so the
+   dashboard can re-copy it, and is dropped again the moment the link is revoked
+   or expires
 4. token validation is a hash comparison
 5. guest-user creation and teardown live behind explicit service calls
 6. the real access boundary is the server-side tag policy; the web-client
@@ -106,7 +109,10 @@ on the server, using Jellyfin's own session manager. No password is ever stored
 anywhere, not even encrypted, and no password ever appears in the page sent to
 the guest. The only thing the guest's browser receives is a session token
 scoped to that one guest account, and that token dies the moment the guest
-account is cleaned up.
+account is cleaned up. On top of that, the guest account is assigned an authentication provider that
+refuses every interactive sign-in, so the normal login page cannot be used to get
+into a guest account at all, password or not. If the plugin is disabled Jellyfin
+falls back to its own invalid-provider handling, which refuses too.
 
 ## Configuration
 
