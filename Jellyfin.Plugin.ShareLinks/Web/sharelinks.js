@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.3-ui-1';
+    var clientVersion = '1.0.3-ui-2';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -67,6 +67,7 @@
             pickFuture: 'Pick a time in the future.',
             multiUseLabel: 'Let several people use this link',
             multiUseHint: 'The link keeps working for anyone you send it to until it expires, instead of dying once the first person opens it.',
+            multiUseLimit: 'Up to {count} of them can watch at the same time.',
             resultMultiUseNote: 'Anyone you send this link to can open it until it expires.',
             cannotDetermineItem: 'Could not determine which item to share. Open the item page and retry.',
             adminOnly: 'ShareLinks is available to administrators only.',
@@ -94,6 +95,7 @@
             pickFuture: 'Choisissez une date dans le futur.',
             multiUseLabel: 'Autoriser plusieurs personnes à utiliser ce lien',
             multiUseHint: 'Le lien reste valable pour toutes les personnes à qui vous l\'envoyez jusqu\'à son expiration, au lieu de mourir dès la première ouverture.',
+            multiUseLimit: 'Jusqu\'a {count} d\'entre elles peuvent regarder en meme temps.',
             resultMultiUseNote: 'Toutes les personnes à qui vous envoyez ce lien peuvent l\'ouvrir jusqu\'à son expiration.',
             cannotDetermineItem: 'Impossible de déterminer l\'élément à partager. Ouvrez la page du média et réessayez.',
             adminOnly: 'ShareLinks est réservé aux administrateurs.',
@@ -1143,7 +1145,7 @@
             cancelText: t('cancel'),
             toggle: {
                 label: t('multiUseLabel'),
-                hint: t('multiUseHint'),
+                hint: buildMultiUseHint(config),
                 checked: !(config && config.OneUseDefault !== false)
             },
             datePicker: {
@@ -1153,6 +1155,16 @@
                 maxHours: maxHours
             }
         });
+    }
+
+    function buildMultiUseHint(config) {
+        var hint = t('multiUseHint');
+        var limit = config ? parseInt(config.MaxConcurrentViewers, 10) : NaN;
+        if (Number.isFinite(limit) && limit > 0) {
+            hint += ' ' + t('multiUseLimit').replace('{count}', limit);
+        }
+
+        return hint;
     }
 
     function copyTextWhenReady(textPromise) {

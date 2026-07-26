@@ -326,13 +326,18 @@ public sealed class ShareLinksController : ControllerBase
             return LinkUnavailablePage(Request);
         }
 
-        var html = await _redemptionService.RedeemAsync(token, Request, cancellationToken).ConfigureAwait(false);
-        if (html is null)
+        var result = await _redemptionService.RedeemAsync(token, Request, cancellationToken).ConfigureAwait(false);
+        if (result.AtCapacity)
+        {
+            return LinkBusyPage();
+        }
+
+        if (result.Html is null)
         {
             return LinkUnavailablePage(Request);
         }
 
-        return Content(html, "text/html; charset=utf-8");
+        return Content(result.Html, "text/html; charset=utf-8");
     }
 
     private static ContentResult LinkUnavailablePage(HttpRequest request)
@@ -375,6 +380,45 @@ setTimeout(function () { window.location.replace({{redirectUrlJson}}); }, 4000);
         return new ContentResult
         {
             StatusCode = StatusCodes.Status404NotFound,
+            ContentType = "text/html; charset=utf-8",
+            Content = html
+        };
+    }
+
+    /// <summary>
+    /// Served when a multi-use link has as many viewers as it is allowed. The link
+    /// itself is still good, so this deliberately invites a retry instead of
+    /// looking like a dead link.
+    /// </summary>
+    private static ContentResult LinkBusyPage()
+    {
+        var html = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Too many viewers</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111827; color: #e5e7eb; }
+    main { max-width: 36rem; padding: 2rem; }
+    .muted { color: #9ca3af; }
+    a { color: #60a5fa; }
+  </style>
+</head>
+<body>
+<main>
+  <div>This link is being watched by as many people as it allows right now.</div>
+  <div class="muted">Ce lien est deja utilise par autant de personnes qu'il l'autorise.</div>
+  <p><a href="">Try again</a></p>
+</main>
+</body>
+</html>
+""";
+
+        return new ContentResult
+        {
+            StatusCode = StatusCodes.Status503ServiceUnavailable,
             ContentType = "text/html; charset=utf-8",
             Content = html
         };

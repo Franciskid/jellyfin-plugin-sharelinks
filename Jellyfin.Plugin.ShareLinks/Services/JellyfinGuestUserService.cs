@@ -187,9 +187,9 @@ public sealed class JellyfinGuestUserService
             EnabledFolders = Array.Empty<Guid>(),
             EnablePublicSharing = false,
             LoginAttemptsBeforeLockout = -1,
-            // One viewer for a one-use link. A multi-use link needs a session per
-            // viewer, and 0 is how Jellyfin spells "no limit" in its session check.
-            MaxActiveSessions = record.OneUse ? 1 : 0,
+            // One viewer for a one-use link. A multi-use link gets the configured
+            // ceiling, where 0 is how Jellyfin spells "no limit" in its session check.
+            MaxActiveSessions = record.OneUse ? 1 : Math.Max(config.MaxConcurrentViewers, 0),
             BlockUnratedItems = Array.Empty<UnratedItem>()
         };
 

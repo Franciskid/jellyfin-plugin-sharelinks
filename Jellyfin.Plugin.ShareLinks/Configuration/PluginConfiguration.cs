@@ -39,6 +39,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets a value indicating whether links default to one use.</summary>
     public bool OneUseDefault { get; set; } = true;
 
+    /// <summary>
+    /// Gets or sets how many people may watch a multi-use link at the same time.
+    /// 0 means no limit. One-use links are always a single viewer regardless.
+    /// </summary>
+    public int MaxConcurrentViewers { get; set; } = 10;
+
     /// <summary>Gets or sets a value indicating whether guest-mode lockdown is enabled.</summary>
     public bool GuestModeLockdownEnabled { get; set; } = true;
 

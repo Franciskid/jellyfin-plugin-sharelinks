@@ -33,7 +33,9 @@ real user or handing over a login that sees everything.
    plugin hands you a link, copied to your clipboard. You also choose there
    whether the link is single use, which is the default and stops working once
    the first person opens it, or multi-use, which lets everyone you send it to
-   open it until it expires.
+   open it until it expires. A multi-use link has a ceiling on how many people can
+   watch at the same time, ten by default, and the eleventh is asked to try again
+   later rather than displacing anyone.
 2. Behind the scenes the plugin tags the shared item with a unique, random tag
    and records the share. Share a series or a season and the tag is applied to
    the whole tree underneath it too - series, seasons and episodes - so the
@@ -117,6 +119,35 @@ refuses every interactive sign-in, so the normal login page cannot be used to ge
 into a guest account at all, password or not. If the plugin is disabled Jellyfin
 falls back to its own invalid-provider handling, which refuses too.
 
+### What a multi-use link does and does not protect
+
+A multi-use link is by design usable by anyone you send it to, so treat the URL
+itself as the secret. Within that:
+
+- The tag policy is per account and the account is the same one, so every viewer
+  still sees exactly the shared title and nothing else. Letting more people in
+  does not widen what any of them can reach.
+- The viewer ceiling caps how many people can *start* watching at once. It is not
+  a hard cap on how many people ever get in: sessions end, and each redemption
+  issues its own session token which keeps working until the link is revoked or
+  expires. If you need a hard stop, revoke the link.
+- Everyone shares one temporary account, so they share playback position and
+  watched state on that title, and they can see each other's sessions in Jellyfin.
+  If that matters to you, use single-use links.
+- Reaching the ceiling turns the new arrival away with a "try again" page. It does
+  not disturb anyone already watching, and it does not kill the link.
+
+### Known limits
+
+- The share token travels in the link's query string, so it will appear in your
+  reverse proxy's access log and in browser history.
+- Redeeming is a public endpoint with no rate limit. Tokens are 256-bit random, so
+  guessing one is not realistic, but the endpoint is reachable by anyone.
+- Records are kept after they expire, for audit, and are never pruned.
+- The `sharelinks-` tag is hidden from non-admins in the web client only. It is
+  still present in the API response for anyone who looks, because that tag is what
+  confines the guest and it cannot be removed without removing the confinement.
+
 ## Configuration
 
 All of these live on the plugin's dashboard page:
@@ -128,6 +159,7 @@ All of these live on the plugin's dashboard page:
 | Guest username prefix | Prefix for the throwaway guest accounts (default `share-`) |
 | Allow transcoding / remuxing | Whether guest playback may transcode or remux |
 | Cleanup interval | How often the background cleanup runs |
+| Maximum viewers per multi-use link | How many people may watch one multi-use link at the same time (default 10, 0 means no limit) |
 | Single use by default | How the single-use box starts out in the create popup; it is a per-link choice |
 | Guest lockdown | The web-client confinement described above (on by default) |
 | Guest hidden selectors | CSS selectors hidden from guests, to suppress other plugins' UI |
