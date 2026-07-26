@@ -2,14 +2,16 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.2-ui-1';
+    var clientVersion = '1.0.2-ui-3';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
     var injectedAttr = 'data-sharelinks-injected';
     var configPromise = null;
     var userPromise = null;
+    var userPromiseUserId = null;
     var guestStatePromise = null;
+    var guestStatePromiseUserId = null;
     var booted = false;
     var scanQueued = false;
     var bootRetry = null;
@@ -222,21 +224,41 @@
         return configPromise;
     }
 
+    /**
+     * The web client is a single page app: signing out or switching accounts does
+     * not reload the document, so anything cached for "the current user" has to be
+     * keyed to the session it came from. Caching it for the lifetime of the page
+     * let an admin's verdict survive into the next user's session.
+     */
     function getCurrentUser() {
-        if (!userPromise) {
+        var userId = currentApiUserId();
+        if (!userPromise || userPromiseUserId !== userId) {
+            userPromiseUserId = userId;
             userPromise = apiGet('Users/Me').catch(function () {
                 return null;
             });
         }
+
         return userPromise;
     }
 
+    function currentApiUserId() {
+        try {
+            return (window.ApiClient && ApiClient.getCurrentUserId && ApiClient.getCurrentUserId()) || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
     function getGuestState() {
-        if (!guestStatePromise) {
+        var userId = currentApiUserId();
+        if (!guestStatePromise || guestStatePromiseUserId !== userId) {
+            guestStatePromiseUserId = userId;
             guestStatePromise = apiGet('ShareLinks/GuestState').catch(function () {
                 return null;
             });
         }
+
         return guestStatePromise;
     }
 
@@ -436,6 +458,9 @@
     async function scanForMoreMenuActions() {
         var user = await getCurrentUser();
         if (!isAdministrator(user)) {
+            // Take back anything injected for a previous session rather than only
+            // skipping: a switch inside the SPA leaves the old DOM in place.
+            removeInjectedActions();
             return;
         }
 
@@ -453,6 +478,12 @@
         }
 
         appendActionSection(container, itemId);
+    }
+
+    function removeInjectedActions() {
+        Array.prototype.forEach.call(document.querySelectorAll('[' + injectedAttr + '="1"]'), function (node) {
+            node.remove();
+        });
     }
 
     /**
