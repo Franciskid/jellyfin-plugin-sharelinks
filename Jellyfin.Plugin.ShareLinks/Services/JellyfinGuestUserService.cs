@@ -3,8 +3,10 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Data.Queries;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.ShareLinks.Models;
+using MediaBrowser.Controller.Devices;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Users;
 using Microsoft.Extensions.Logging;
@@ -14,13 +16,24 @@ namespace Jellyfin.Plugin.ShareLinks.Services;
 /// <summary>Creates and tears down temporary Jellyfin guest users.</summary>
 public sealed class JellyfinGuestUserService
 {
+    /// <summary>
+    /// The app name redemption stamps on a guest session. Used to tell this plugin's
+    /// device rows apart from everything else on the server.
+    /// </summary>
+    public const string GuestAppName = "ShareLinks";
+
     private readonly IUserManager _userManager;
+    private readonly IDeviceManager _deviceManager;
     private readonly ILogger<JellyfinGuestUserService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="JellyfinGuestUserService"/> class.</summary>
-    public JellyfinGuestUserService(IUserManager userManager, ILogger<JellyfinGuestUserService> logger)
+    public JellyfinGuestUserService(
+        IUserManager userManager,
+        IDeviceManager deviceManager,
+        ILogger<JellyfinGuestUserService> logger)
     {
         _userManager = userManager;
+        _deviceManager = deviceManager;
         _logger = logger;
     }
 
@@ -117,6 +130,11 @@ public sealed class JellyfinGuestUserService
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
+            // Devices first. Jellyfin does not cascade a user delete to the Device
+            // rows that redemption created, and a Device whose user is gone makes
+            // DeviceManager.ToDeviceInfo throw for the WHOLE listing, so one leftover
+            // guest 404s the admin dashboard's devices page entirely.
+            await DeleteDevicesForUserAsync(user.Id).ConfigureAwait(false);
             await _userManager.DeleteUserAsync(user.Id).ConfigureAwait(false);
             _logger.LogInformation("ShareLinks: deleted guest user {UserName} for record {RecordId}.", user.Username, record.Id);
         }
@@ -125,6 +143,72 @@ public sealed class JellyfinGuestUserService
             _logger.LogWarning(ex, "ShareLinks: failed to delete guest user {UserName} for record {RecordId}.", user.Username, record.Id);
             throw;
         }
+    }
+
+    /// <summary>Removes every device row belonging to a guest account.</summary>
+    private async Task DeleteDevicesForUserAsync(Guid userId)
+    {
+        // GetDevices returns the raw entities. GetDevicesForUser/GetDevice project to
+        // DTOs and resolve the owning user on the way, which is exactly what throws
+        // once the user is gone, so neither of those can be used to clean up after it.
+        var devices = _deviceManager.GetDevices(new DeviceQuery { UserId = userId });
+        foreach (var device in devices.Items)
+        {
+            try
+            {
+                await _deviceManager.DeleteDevice(device).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "ShareLinks: deleted device {DeviceId} ({AppName}) for guest {UserId}.",
+                    device.DeviceId,
+                    device.AppName,
+                    userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ShareLinks: failed to delete device {DeviceId}.", device.DeviceId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes device rows left behind by guests that were removed before this
+    /// cleanup existed. Scoped to devices this plugin created, so a stale row from
+    /// anything else on the server is left for its owner to deal with.
+    /// </summary>
+    public async Task<int> PurgeOrphanedGuestDevicesAsync(CancellationToken cancellationToken)
+    {
+        var removed = 0;
+        var devices = _deviceManager.GetDevices(new DeviceQuery());
+        foreach (var device in devices.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!string.Equals(device.AppName, GuestAppName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (_userManager.GetUserById(device.UserId) is not null)
+            {
+                continue;
+            }
+
+            try
+            {
+                await _deviceManager.DeleteDevice(device).ConfigureAwait(false);
+                removed++;
+                _logger.LogInformation(
+                    "ShareLinks: removed orphaned guest device {DeviceId} whose user {UserId} no longer exists.",
+                    device.DeviceId,
+                    device.UserId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ShareLinks: failed to remove orphaned device {DeviceId}.", device.DeviceId);
+            }
+        }
+
+        return removed;
     }
 
     private User? FindRecordUser(ShareLinkRecord record)
