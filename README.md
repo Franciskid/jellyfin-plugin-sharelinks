@@ -37,13 +37,7 @@ real user or handing over a login that sees everything.
 2. Behind the scenes the plugin tags the shared item with a unique, random tag
    and records the share. Share a series or a season and the tag goes on
    everything underneath it as well, so the guest can browse down through what
-   you shared rather than seeing a single locked node. The tag never goes on
-   anything above it: Jellyfin treats a parent's tags as belonging to all of its
-   children, so tagging the series that a shared season sits in would hand over
-   every other season too. Share one season and that is all the guest gets, and
-   the series page is not theirs to open. Lookups only ever go through a keyed
-   HMAC hash of the token, and the link itself is dropped from the record once
-   it is revoked or expired.
+   you shared.
 3. Whoever opens the link gets a throwaway guest user created on the spot,
    restricted by that tag to the shared item and its tree, and is signed in
    automatically. They land on the title's page.
@@ -70,16 +64,17 @@ server, not only in the browser:
   into its seasons and episodes, a shared season into its episodes. Going up does
   not, so a guest sent one season cannot reach the series it belongs to.
 
-  Be clear about what that last part is: it runs in the browser. A guest who
+  To be clear about what that last part is: it runs in the browser. So a guest who
   disables the script, or who uses their token from another client, can reach the
   home screen. They find it empty, because the tag policy answers those queries on
-  the server. Which page you are on is the browser's doing, what you can pull is
-  the server's. Only the second one is load bearing.
+  the server. There really isn't anyway to completely lock the user on the media page
+  from the server pov, the only way would be that the plugin uses its own users and its
+  own login workflow but that would be unmaintainable and not particularly useful anyway.
 
 Playback works normally, including transcoding and remuxing if you allow it, and
 the player's back button still returns them to the title's page.
 
-One honest caveat: if you share a series or season and new episodes get added
+One issue: if you share a series or season and new episodes get added
 to it later, those episodes only pick up the tag (and become visible to the
 guest) the next time the link is redeemed : not the instant they are added. For
 a one-use link that has already been redeemed, that never happens, so a
@@ -171,10 +166,12 @@ itself as the secret. Within that:
   reverse proxy's access log and in browser history.
 - Redeeming is a public endpoint with no rate limit. Tokens are 256-bit random, so
   guessing one is not realistic, but the endpoint is reachable by anyone.
-- Records are kept after they expire, for audit, and are never pruned automatically (you can do so manually though.
+- Records are kept after they expire, for audit, and are never pruned automatically (you can do so manually though).
 - The `sharelinks-` tag is hidden from non-admins in the web client only. It is
   still present in the API response for anyone who looks, because that tag is what
   confines the guest and it cannot be removed without removing the confinement.
+- The token used for the guest is a real jellyfin session token. It can be abused in ways normal accounts can be
+  but in any case, accounts can't really do anything besides watching the media you shared for the duration you set.
 
 ## Configuration
 
