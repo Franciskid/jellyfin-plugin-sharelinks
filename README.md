@@ -202,5 +202,9 @@ Licensed under the [GPL-3.0](LICENSE), like most Jellyfin plugins.
 
 ## Images
 
+<img width="280" height="119" alt="image" src="https://github.com/user-attachments/assets/25cfaa99-eed2-4bc6-a14b-bc00bc629d5e" />
+
+<img width="567" height="313" alt="image" src="https://github.com/user-attachments/assets/d9e581eb-d654-4c73-8730-0b2b19fbbe25" />
+
 <img width="566" height="521" alt="image" src="https://github.com/user-attachments/assets/754f3daa-80ee-4209-9d09-467940140f81" />
 
