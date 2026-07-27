@@ -61,13 +61,20 @@ server, not only in the browser:
 - The guest's Jellyfin policy only permits items carrying the share's tag, so
   every other movie, show, library and search comes back empty from the API.
   Even someone poking at the raw API cannot list your other content.
-- On top of that, the web client is locked down for the guest: the home,
-  menu and search buttons are hidden, in-page links (cast, studio, genres) are
-  made inert, any attempt to navigate somewhere outside the shared tree snaps back
-  to the shared title. Navigating down within what you shared works normally: a
-  shared series opens into its seasons and episodes, a shared season into its
-  episodes. Going up does not, so a guest sent one season cannot reach the series
-  it belongs to.
+- Other plugins' endpoints refuse the guest, on the server, so hiding a plugin's
+  button is not what keeps a guest out of it. See below.
+- On top of that, the web client is tidied for the guest: the home, menu and
+  search buttons are hidden, in-page links (cast, studio, genres) are made inert,
+  and navigating outside the shared tree snaps back to the shared title.
+  Navigating down within what you shared works normally: a shared series opens
+  into its seasons and episodes, a shared season into its episodes. Going up does
+  not, so a guest sent one season cannot reach the series it belongs to.
+
+  Be clear about what that last part is: it runs in the browser. A guest who
+  disables the script, or who uses their token from another client, can reach the
+  home screen. They find it empty, because the tag policy answers those queries on
+  the server. Which page you are on is the browser's doing, what you can pull is
+  the server's. Only the second one is load bearing.
 
 Playback works normally, including transcoding and remuxing if you allow it, and
 the player's back button still returns them to the title's page.
@@ -85,14 +92,31 @@ copyable link, the temporary guest name, and an expiry, and lets you revoke any
 of them on the spot. Revoking runs the same teardown as expiry: guest gone and tag
 gone.
 
-## Hiding other plugins from guests
+## Other plugins and guests
 
-If you run other plugins that inject their own UI into the web client (a search
-bar, a floating button), you probably do not want a guest to see them. I had
-exactly that problem with a different plugin of mine, so the **Guest hidden
-selectors** setting is a comma-separated list of CSS selectors that get hidden
-in guest sessions. You can just add the class name or the id of the element you want
-to hide and add it there
+A guest is a real Jellyfin account holding a real access token. That token works
+anywhere a Jellyfin token works, including curl and the mobile apps, so anything
+that decides who gets in has to decide it on the server.
+
+**Block other plugins for guests** does that, and it is on by default. ShareLinks
+registers a filter that runs on every API request in the server, so it covers
+plugins you did not write and plugins you install later, without those plugins
+needing to know ShareLinks exists. When a guest account calls another plugin's
+endpoint, the request is refused with a 403. Jellyfin's own API is left alone:
+the share tag already limits it to the shared title, and playback runs through it.
+
+Some plugins genuinely need to answer guests. An intro skipper, for instance, is
+called by the client during playback. The config page lists your installed
+plugins with a checkbox each, so you can let those through one at a time.
+Everything starts unticked, so a plugin you install next month is covered on the
+day it lands rather than the day you remember it.
+
+There is also a **cosmetic hidden selectors** box, a comma-separated list of CSS
+selectors hidden in guest sessions. Add the class name or the id of the element
+you want gone and it disappears for guests. It is for tidiness, so a guest is not
+looking at another plugin's floating button. It runs in the browser and enforces
+nothing: anyone who opens devtools or skips the web client sees straight past it.
+Do not use it as a way to keep a guest out of something. The block above is that.
 
 ## Security stance
 
@@ -165,8 +189,10 @@ All of these live on the plugin's dashboard page:
 | Cleanup interval | How often the background cleanup runs |
 | Maximum viewers per multi-use link | How many people may watch one multi-use link at the same time (default 10, 0 means no limit) |
 | Single use by default | How the single-use box starts out in the create popup; it is a per-link choice |
-| Guest lockdown | The web-client confinement described above (on by default) |
-| Guest hidden selectors | CSS selectors hidden from guests, to suppress other plugins' UI |
+| Guest lockdown | The web-client tidying described above (on by default) |
+| Block other plugins for guests | Refuses guests on other plugins' API endpoints, server side (on by default) |
+| Plugin access list | Plugins you tick stay reachable by guests despite the block |
+| Cosmetic hidden selectors | CSS selectors hidden from guests. Appearance only, enforces nothing |
 
 ## Known limitation: cast and crew
 
