@@ -7,9 +7,7 @@ them an account, without them seeing the rest of your library.
 
 ShareLinks adds a **ShareLink** button (with a little share icon) to the context
 menu of any movie, episode, series or season in the Jellyfin web client. It sits
-in its own section at the bottom of the menu, and it only shows up for those four
-kinds of item, never for a cast member, a studio, a library or anything else you
-cannot actually watch. Click it, pick how long the link should live, and you get
+in its own section at the bottom of the menu. Click it, pick how long the link should live, and you get
 a URL you can send to anyone. When they open it, they land straight on that title, already signed in,
 and they cannot wander off into the rest of your server.
 
@@ -114,10 +112,11 @@ Everything starts unticked, so a plugin you install next month is covered on the
 day it lands rather than the day you remember it.
 
 There is also a **cosmetic hidden selectors** box, a comma-separated list of CSS
-selectors hidden in guest sessions. It is for tidiness, so a guest is not looking
-at another plugin's floating button. It runs in the browser and enforces nothing:
-anyone who opens devtools or skips the web client sees straight past it. Do not
-use it as a way to keep a guest out of something. The block above is that.
+selectors hidden in guest sessions. Add the class name or the id of the element
+you want gone and it disappears for guests. It is for tidiness, so a guest is not
+looking at another plugin's floating button. It runs in the browser and enforces
+nothing: anyone who opens devtools or skips the web client sees straight past it.
+Do not use it as a way to keep a guest out of something. The block above is that.
 
 ## Security stance
 
@@ -202,8 +201,8 @@ where a user restricted by tags loses the Cast & Crew section entirely, because
 the tag filter is applied to people as well as to media. Since a ShareLinks
 guest is tag-restricted, they hit this: the shared title's page shows no
 actors, director or writer. This is a server-side Jellyfin issue, not something
-the plugin can style around. A workaround inside the plugin is possible and on
-the list.
+the plugin can style around. A workaround inside the plugin might be possible by
+adding the tag to all of the crew/cast of the specific media shared.
 
 ## Compatibility
 
@@ -224,7 +223,15 @@ Developed by [Franciskid](https://github.com/Franciskid).
 Licensed under the [GPL-3.0](LICENSE), like most Jellyfin plugins.
 
 
-## Images
+## **Workflow**
 
+### Step 1
+<img width="566" height="240" alt="image" src="https://github.com/user-attachments/assets/25cfaa99-eed2-4bc6-a14b-bc00bc629d5e" />
+
+### Step 2
 <img width="566" height="521" alt="image" src="https://github.com/user-attachments/assets/754f3daa-80ee-4209-9d09-467940140f81" />
+
+### Step 3
+<img width="566" height="313" alt="image" src="https://github.com/user-attachments/assets/d9e581eb-d654-4c73-8730-0b2b19fbbe25" />
+
 
