@@ -177,7 +177,7 @@ public sealed class ShareLinkRedemptionService
             {
                 Username = record.GuestUserName,
                 UserId = record.GuestUserId.Value,
-                App = "ShareLinks",
+                App = JellyfinGuestUserService.GuestAppName,
                 AppVersion = "1.0.0",
                 DeviceId = record.DeviceId,
                 DeviceName = "ShareLinks",

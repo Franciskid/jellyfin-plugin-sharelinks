@@ -1,7 +1,7 @@
 {
   "guid": "68540b76-ee74-436d-85ff-2abc884bbea6",
   "name": "ShareLinks",
-  "version": "1.0.4.0",
+  "version": "1.0.5.0",
   "targetAbi": "10.11.0.0",
   "framework": "net9.0",
   "owner": "Franciskid",
