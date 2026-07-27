@@ -11,6 +11,7 @@ using Jellyfin.Plugin.ShareLinks.Configuration;
 using Jellyfin.Plugin.ShareLinks.Models;
 using Jellyfin.Plugin.ShareLinks.Services;
 using Jellyfin.Plugin.ShareLinks.Storage;
+using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -99,6 +100,19 @@ public sealed class ShareLinkGuestStateDto
     public string? HiddenSelectors { get; set; }
 }
 
+/// <summary>An installed plugin, as offered in the guard's exception list.</summary>
+public sealed class ShareLinkPluginDto
+{
+    /// <summary>Gets or sets the plugin id.</summary>
+    public Guid Id { get; set; }
+
+    /// <summary>Gets or sets the plugin's display name.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets a value indicating whether guests may currently reach it.</summary>
+    public bool AllowedForGuests { get; set; }
+}
+
 /// <summary>ShareLinks API surface.</summary>
 [ApiController]
 [Route("ShareLinks")]
@@ -109,6 +123,7 @@ public sealed class ShareLinksController : ControllerBase
     private readonly ShareLinkCleanupService _cleanupService;
     private readonly ShareLinkRedemptionService _redemptionService;
     private readonly ShareLinkStore _store;
+    private readonly IPluginManager _pluginManager;
     private readonly ILogger<ShareLinksController> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ShareLinksController"/> class.</summary>
@@ -118,6 +133,7 @@ public sealed class ShareLinksController : ControllerBase
         ShareLinkCleanupService cleanupService,
         ShareLinkRedemptionService redemptionService,
         ShareLinkStore store,
+        IPluginManager pluginManager,
         ILogger<ShareLinksController> logger)
     {
         _libraryManager = libraryManager;
@@ -125,6 +141,7 @@ public sealed class ShareLinksController : ControllerBase
         _cleanupService = cleanupService;
         _redemptionService = redemptionService;
         _store = store;
+        _pluginManager = pluginManager;
         _logger = logger;
     }
 
@@ -282,6 +299,38 @@ public sealed class ShareLinksController : ControllerBase
 
         var removed = await _cleanupService.PurgeFinishedAsync(cancellationToken).ConfigureAwait(false);
         return Ok(new { removed });
+    }
+
+    /// <summary>
+    /// Lists the installed plugins so the config page can offer them as guard
+    /// exceptions. ShareLinks itself is left out: it is always reachable, since the
+    /// guest's browser fetches the lockdown script and guest state from it.
+    /// </summary>
+    [HttpGet("Admin/Plugins")]
+    [Authorize(AuthenticationSchemes = "CustomAuthentication")]
+    public ActionResult<IEnumerable<ShareLinkPluginDto>> Plugins()
+    {
+        SetNoStoreHeaders();
+        if (!User.IsInRole("Administrator"))
+        {
+            return Forbid();
+        }
+
+        var allowed = Config.GuestAllowedPluginIds ?? Array.Empty<string>();
+        var ownId = Plugin.Instance?.Id;
+
+        var plugins = _pluginManager.Plugins
+            .Where(plugin => !ownId.HasValue || plugin.Id != ownId.Value)
+            .Select(plugin => new ShareLinkPluginDto
+            {
+                Id = plugin.Id,
+                Name = plugin.Name,
+                AllowedForGuests = allowed.Any(value => Guid.TryParse(value, out var parsed) && parsed == plugin.Id)
+            })
+            .OrderBy(plugin => plugin.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return Ok(plugins);
     }
 
     /// <summary>Returns the guest session state for the current authenticated user.</summary>

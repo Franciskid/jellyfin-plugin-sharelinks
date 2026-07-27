@@ -130,8 +130,8 @@
                         </div>
 
                         <div class="sl-field inputContainer" style="grid-column: 1 / -1;">
-                            <input is="emby-input" type="text" id="GuestHiddenSelectors" label="Guest hidden selectors (CSS, comma-separated)" />
-                            <div class="fieldDescription">Elements hidden from guest sessions, e.g. other plugins' buttons. Empty by default.</div>
+                            <input is="emby-input" type="text" id="GuestHiddenSelectors" label="Cosmetic: hide elements from guests (CSS, comma-separated)" />
+                            <div class="fieldDescription">Tidies the guest's view only. This runs in the browser and blocks nothing, so do not rely on it to keep a guest out of anything. Use the plugin access section below for that.</div>
                         </div>
 
                         <div class="sl-field inputContainer">
@@ -164,6 +164,21 @@
                             </label>
                             <div class="fieldDescription">Hides primary navigation for guest sessions in the web client. This is UX only, not the security boundary.</div>
                         </div>
+                    </div>
+                </div>
+
+                <div class="sl-section">
+                    <h3 class="sectionTitle">Plugin access for guests</h3>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="GuestPluginApiGuardEnabled" />
+                            <span>Block other plugins for guests</span>
+                        </label>
+                        <div class="fieldDescription">Refuses guest accounts on other plugins' API endpoints, on the server. A guest holds a real Jellyfin token, so without this any installed plugin answers them directly, whatever the web client shows. Jellyfin's own API stays available: the share tag already limits it to the shared title, and playback needs it.</div>
+                    </div>
+                    <div class="sl-muted" style="margin-top:0.75rem;">Tick a plugin to let guests reach it anyway. Leave everything unticked unless a plugin needs to serve guests during playback, such as an intro skipper.</div>
+                    <div id="GuestAllowedPlugins" style="margin-top:0.5rem;">
+                        <div class="sl-muted">Loading plugins…</div>
                     </div>
                 </div>
 
@@ -228,8 +243,54 @@
                     page.querySelector('#OneUseDefault').checked = cfg.OneUseDefault !== false;
                     page.querySelector('#MaxConcurrentViewers').value = cfg.MaxConcurrentViewers === undefined ? 10 : cfg.MaxConcurrentViewers;
                     page.querySelector('#GuestModeLockdownEnabled').checked = cfg.GuestModeLockdownEnabled !== false;
+                    page.querySelector('#GuestPluginApiGuardEnabled').checked = cfg.GuestPluginApiGuardEnabled !== false;
                 }).finally(function () {
                     Dashboard.hideLoadingMsg();
+                });
+            }
+
+            // The ticked state comes from the server rather than from the config we
+            // just loaded, so a plugin that has since been uninstalled drops out of
+            // the list instead of lingering as a stale checkbox.
+            function loadPlugins() {
+                var host = page.querySelector('#GuestAllowedPlugins');
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('ShareLinks/Admin/Plugins'),
+                    dataType: 'json'
+                }).then(function (list) {
+                    var items = Array.isArray(list) ? list : [];
+                    if (!items.length) {
+                        host.innerHTML = '<div class="sl-muted">No other plugins installed.</div>';
+                        return;
+                    }
+
+                    host.innerHTML = items.map(function (plugin) {
+                        return '<div class="checkboxContainer">'
+                            + '<label>'
+                            + '<input is="emby-checkbox" type="checkbox" class="sl-plugin-allow" data-plugin-id="'
+                            + escapeHtml(plugin.Id) + '"' + (plugin.AllowedForGuests ? ' checked' : '') + ' />'
+                            + '<span>' + escapeHtml(plugin.Name) + '</span>'
+                            + '</label>'
+                            + '</div>';
+                    }).join('');
+                }).catch(function () {
+                    host.innerHTML = '<div class="sl-muted">Could not load the plugin list.</div>';
+                });
+            }
+
+            function collectAllowedPluginIds() {
+                // A failed plugin load leaves no checkboxes to read. Returning the saved
+                // config untouched in that case avoids silently clearing the exceptions.
+                var boxes = page.querySelectorAll('.sl-plugin-allow');
+                if (!boxes.length) {
+                    return null;
+                }
+
+                return Array.prototype.filter.call(boxes, function (box) {
+                    return box.checked;
+                }).map(function (box) {
+                    return box.getAttribute('data-plugin-id');
                 });
             }
 
@@ -410,6 +471,13 @@
                     cfg.OneUseDefault = page.querySelector('#OneUseDefault').checked;
                     cfg.MaxConcurrentViewers = Math.max(parseInt(page.querySelector('#MaxConcurrentViewers').value, 10) || 0, 0);
                     cfg.GuestModeLockdownEnabled = page.querySelector('#GuestModeLockdownEnabled').checked;
+                    cfg.GuestPluginApiGuardEnabled = page.querySelector('#GuestPluginApiGuardEnabled').checked;
+
+                    var allowedPluginIds = collectAllowedPluginIds();
+                    if (allowedPluginIds !== null) {
+                        cfg.GuestAllowedPluginIds = allowedPluginIds;
+                    }
+
                     ApiClient.updatePluginConfiguration(ShareLinksPluginId, cfg).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                         return loadLinks();
@@ -422,7 +490,7 @@
 
             document.querySelector('#ShareLinksConfigPage').addEventListener('pageshow', function () {
                 page = this;
-                loadConfig().then(loadLinks);
+                loadConfig().then(loadPlugins).then(loadLinks);
             });
 
             document.querySelector('#ShareLinksConfigForm').addEventListener('submit', save);
