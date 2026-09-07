@@ -1,13 +1,13 @@
 # ShareLinks for Jellyfin
 
-Send someone one movie, episode, season or series through a link that expires. They need no
-account, and they see nothing else on your server.
+Share a movie, episode, season or series with a link. The person you send it to does not need
+an account and can only access what you shared. You choose when the link expires.
 
-`Jellyfin 10.11` · `.NET 9` · `no account for the guest` · `server-side confinement` · `automatic teardown`
+`Jellyfin 10.11` · `.NET 9` · `no account for the guest` · `access restricted on the server` · `automatic cleanup`
 
 ShareLinks adds a **ShareLink** entry to the context menu of any movie, series, season or episode.
-You pick an expiry and receive a URL. The person who opens it lands on that title, already signed
-in, with a temporary account that Jellyfin restricts to the shared branch. When the link expires,
+Choose an expiry date and copy the link. Whoever opens it goes straight to the shared title,
+already signed in with a temporary account. When the link expires,
 the account and the temporary tag are removed.
 
 <img width="1505" height="820" alt="Create guest link dialog, opened from the item menu" src="https://github.com/user-attachments/assets/27296f27-9a37-4870-90aa-df8b6d9e9f43" />
@@ -16,26 +16,24 @@ the account and the temporary tag are removed.
 
 ## Threat model
 
-A guest holds a real Jellyfin access token. That token works in curl, in the mobile apps, and in
-any other client. So a share feature that hides buttons in the browser protects nothing.
+Guests receive a Jellyfin access token, which also works in mobile apps and other clients.
+Hiding buttons in the browser would not stop someone from accessing the rest of your library.
 
-The confinement therefore lives on the server, in two layers:
+The plugin restricts access on the server in two ways:
 
 1. **Jellyfin's tag policy.** Every share creates a random tag, `sharelinks-<32 hex>`. The tag goes
-   on the shared item and on everything below it. The guest account allows exactly that one tag, so
-   every other item, library and search returns empty from the API.
-2. **A request filter for plugin routes.** Jellyfin's own API is bounded by the tag policy, and
-   playback depends on it, so it stays open. Every other controller belongs to a plugin and is
-   refused with 403 for guest accounts, unless an administrator opts that plugin in.
+   on the shared item and its children, such as the episodes in a season. The guest account can
+   only access items with that tag. Other content is filtered out of library and search results.
+2. **A request filter for plugin routes.** Jellyfin's own API stays available for playback,
+   with access limited by the tag policy. Guests receive a 403 response from other plugins'
+   routes unless an administrator explicitly allows access to that plugin.
 
-The web client lockdown is a third layer, and it is the only cosmetic one. It hides the home, menu
-and search controls, makes cast and genre links inert, and returns the guest to the shared title if
-they navigate out of the branch. A guest who disables the script reaches the home screen and finds
-it empty, because the server answers those queries, not the browser.
+The web client also hides the home, menu and search controls, disables cast and genre links,
+and brings guests back to the shared title if they navigate away. This keeps the interface simple;
+the server enforces the access restrictions even if someone disables the script.
 
-No server-side setting pins a Jellyfin user to one page. The alternative is a parallel user system
-with its own login flow inside the plugin, which is not maintainable and adds nothing: the tag
-policy already decides what the guest can pull.
+Jellyfin has no server setting that keeps a user on one page. The plugin uses Jellyfin accounts
+and tag permissions to control what guests can access, without a separate login system.
 
 ## Flow
 
@@ -62,54 +60,53 @@ sequenceDiagram
 2. **Tag.** The plugin tags the item and everything below it. Tagging never goes upwards: Jellyfin
    treats a parent's tags as belonging to all of its children, so tagging the series of a shared
    season would hand over every other season.
-3. **Redeem.** The link mints a throwaway guest account, applies the policy, and signs the visitor
-   in with a server-side session. They land on the title.
-4. **Tear down.** Expiry or revocation disables and deletes the guest account, deletes its device
-   rows, and strips the tag from the whole tree. A scheduled task and a startup pass catch anything
-   that was missed while the server was off.
+3. **Redeem.** Opening the link creates a temporary guest account, applies the access restrictions,
+   and signs the visitor in. They go straight to the shared title.
+4. **Clean up.** Expiry or revocation disables and deletes the guest account, removes its registered
+   devices, and removes the tag from the shared items. Cleanup also runs on a schedule and at
+   startup, so expired links are handled if the server was off.
 
 ## Design decisions
 
 | Decision | Reason |
 |---|---|
-| Only the token HMAC hash is stored | The raw token is returned once and never enters durable storage. Lookups hash the presented token and compare with `FixedTimeEquals`. |
-| The HMAC key is a per-server file, mode 0600 | A stolen `sharelinks.json` yields no usable token. The key is generated on first use. |
+| Only the token HMAC hash is stored | The raw token is returned once and is never saved to disk. Lookups hash the presented token and compare with `FixedTimeEquals`. |
+| The HMAC key is a per-server file, mode 0600 | The `sharelinks.json` file alone cannot be used to recover a token. The key is generated on first use. |
 | Tags propagate down, never up | A bug fixed in 1.0.3: a shared season tagged its parent series, and Jellyfin's tag inheritance then exposed every other season of that series. |
-| Guest accounts use a dedicated authentication provider | It refuses every interactive sign-in, so the login page cannot reach a guest account with any password. If the plugin is disabled, the provider id stops resolving and Jellyfin falls back to its own invalid provider, which also refuses. The design fails closed. |
-| The password is generated per redemption and thrown away | The account still needs one, so it is never reachable with a blank password. The browser only ever receives a session token. |
-| Redemption is serialized behind a semaphore | The status check and the status write are not atomic. Two simultaneous requests with the same one-use token would otherwise both mint a session. |
+| Guest accounts use a dedicated authentication provider | Guests cannot sign in through the login page with a password. If the plugin is disabled, Jellyfin also refuses those sign-ins. |
+| The password is generated per redemption and thrown away | This prevents sign-in with a blank password. The browser receives only a session token. |
+| Links are redeemed one request at a time | This prevents two simultaneous requests from both using the same single-use link. |
 | Each multi-use viewer receives its own device id | Jellyfin logs out any session with the same user and device id, so a shared device id would kick out the previous viewer on every new arrival. |
-| The viewer ceiling is checked before any write | Jellyfin enforces the same limit itself, but it throws. A throw lands in the failure path, and the failure path tears the share down on everyone already watching. |
-| The plugin guard is structural, not a route list | The rule is "core assembly allowed, plugin assemblies refused", not a curated list. A plugin installed next month is covered on the day it lands. |
-| Guest devices are deleted before the user | Jellyfin does not cascade, and a device row whose user is gone makes the whole admin devices page fail, not just one row. |
+| The viewer limit is checked before changing anything | Handling the limit before Jellyfin raises an error lets the plugin turn away a new viewer without interrupting anyone already watching. |
+| Other plugins are blocked by default | The filter distinguishes Jellyfin core from plugin code, so newly installed plugins are blocked too. |
+| Guest devices are deleted before the user | Jellyfin does not remove devices when a user is deleted. Leftover devices can break the admin devices page. |
 
 ## What the guest can do
 
 - Watch the shared title, and browse down into it. A shared series opens into its seasons and
   episodes. A shared season opens into its episodes.
-- Nothing else. No other item, library, search result, collection or plugin route answers them.
+- Access only the shared content. Other plugins are blocked unless you allow them in the settings.
 - Playback works normally, with transcoding and remuxing if you allow them.
 
 Going up does not work. A guest who receives one season cannot open the series that contains it.
 
 ## Multi-use links
 
-A multi-use link works for everyone you send it to until it expires. Treat the URL itself as the
-secret. Within that:
+A multi-use link works for everyone you send it to until it expires. Anyone with the link can use it, so only send it to people you want to give access to.
 
 - Every viewer uses the same account, so every viewer sees the same single title. More viewers do
   not mean more content.
-- The ceiling, 10 by default, caps how many people **start** watching at the same time. It is not a
+- The limit, 10 by default, caps how many people **start** watching at the same time. It is not a
   cap on how many people use the link in total. Sessions end, and each redemption issues its own
   token. Revoke the link if you need a hard stop.
 - One account means shared playback position and shared watch state. Use single-use links if that
   matters.
-- A viewer over the ceiling receives a "try again later" page. Nobody watching is disturbed.
+- A viewer over the limit receives a "try again later" page. Nobody watching is disturbed.
 
 ## Managing links
 
 The plugin dashboard page lists every share with its status, title, copyable link, guest name and
-expiry. You can revoke any link on the spot, which runs the same teardown as expiry. A cleanup
+expiry. You can revoke any link on the spot, which removes the guest account and tags, just like expiry. A cleanup
 button removes revoked, expired and failed records from the store.
 
 ## Install
@@ -128,25 +125,25 @@ to appear.
 | Setting | Effect | Default |
 |---|---|---|
 | Default expiry | The expiry the create popup offers first | 24 h |
-| Maximum expiry | The ceiling a link may be set to | 720 h |
+| Maximum expiry | The longest allowed lifetime for a link | 720 h |
 | Public base URL override | Forces the host used to build links, instead of the request host | derived |
 | Guest username prefix | Prefix for the temporary accounts | `share-` |
 | Allow transcoding / remuxing | Whether guest playback may transcode or remux | on |
 | Cleanup interval | How often the background cleanup runs | 60 min |
 | Maximum viewers per multi-use link | Concurrent viewers on one multi-use link. 0 means no limit | 10 |
 | Single use by default | How the create popup starts | on |
-| Guest lockdown | The web-client tidying. Cosmetic | on |
-| Block other plugins for guests | Refuses guests on other plugins' API routes, server side | on |
-| Plugin access list | Plugins that stay reachable by guests. Start empty | empty |
-| Cosmetic hidden selectors | CSS selectors hidden from guests. Enforces nothing | empty |
+| Guest lockdown | Hides navigation controls in the guest interface | on |
+| Block other plugins for guests | Blocks guest access to other plugins on the server | on |
+| Plugin access list | Plugins guests are allowed to access | empty |
+| Cosmetic hidden selectors | Hides matching elements in the browser; does not restrict access | empty |
 
 **On the plugin access list:** some plugins have to answer guests. An intro skipper, for example,
-is called by the client during playback. Tick that one plugin. Everything starts unticked, so a new
-plugin is covered by default.
+is called by the client during playback. Enable access for that plugin in the list. Plugins are blocked by default, including newly
+installed ones.
 
-**On the cosmetic selectors:** the box hides another plugin's floating button from a guest's view.
-It runs in the browser. Anyone who opens devtools sees past it. Use the plugin block above for
-access, not this.
+**On the cosmetic selectors:** use these to hide elements such as another plugin's floating button.
+This only changes what guests see in the browser. To restrict access, use the plugin access
+settings above.
 
 ## HTTP API
 
@@ -154,7 +151,7 @@ access, not this.
 |---|---|---|
 | `POST /ShareLinks/Admin/Create` | Admin | Create a link. Returns the raw URL once |
 | `GET /ShareLinks/Admin/List` | Admin | All records with status and expiry |
-| `POST /ShareLinks/Admin/Revoke/{id}` | Admin | Revoke and tear down |
+| `POST /ShareLinks/Admin/Revoke/{id}` | Admin | Revoke a link and remove its guest account and tags |
 | `POST /ShareLinks/Admin/Cleanup` | Admin | Remove revoked, expired and failed records |
 | `GET /ShareLinks/Admin/Plugins` | Admin | Installed plugins and their guest access state |
 | `GET /ShareLinks/GuestState` | Session | Whether the caller is a guest, and what to lock down |
@@ -169,18 +166,18 @@ it in `token-secret.key`.
 - **Cast and crew are missing on a shared page.** Jellyfin core bug
   [jellyfin/jellyfin#14926](https://github.com/jellyfin/jellyfin/issues/14926): a tag-restricted user
   loses the Cast & Crew section, because the tag filter is applied to people as well as to media. A
-  ShareLinks guest is tag-restricted, so it hits this.
+  ShareLinks guest is tag-restricted, so guests are affected too.
 - **The token travels in the query string.** It appears in reverse-proxy access logs and in browser
   history.
 - **Redemption is public and has no rate limit.** Tokens are 256-bit random, so guessing one is not
   realistic, but the endpoint answers anyone.
 - **Episodes added after a share** receive the tag on the next redemption, not the moment they are
-  added. A one-use link that was already redeemed is a snapshot of the branch at that time.
+  added. A one-use link that was already redeemed is limited to the items present when it was redeemed.
 - **Records are kept after they expire**, for audit. Remove them with the cleanup button.
 - **The `sharelinks-` tag is hidden from non-admins in the web client only.** It stays in the API
-  response, because that tag is what confines the guest.
+  response, because Jellyfin uses that tag to restrict guest access.
 - **The guest session token is a real Jellyfin token.** It can be misused in the ways any Jellyfin
-  token can. What it reaches is still one title, for the duration you set.
+  token can. Access is still limited to the shared content for the duration you set.
 
 ## Compatibility
 
