@@ -181,7 +181,7 @@ it in `token-secret.key`.
 
 ## Compatibility
 
-Jellyfin **10.11** (`targetAbi 10.11.0.0`), .NET 9. Tested on 10.11.8. The web-client injection
+Jellyfin **10.11** (`targetAbi 10.11.0.0`), .NET 9. Tested on 10.11.8 and 10.11.11. The web-client injection
 targets the shipped client, in English and in French.
 
 ## Workflow

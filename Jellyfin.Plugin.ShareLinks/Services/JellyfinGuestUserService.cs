@@ -90,7 +90,7 @@ public sealed class JellyfinGuestUserService
         // policy hands the account to GuestAuthenticationProvider, which refuses every
         // interactive sign-in - but it means the account is never reachable with a blank
         // password either.
-        await _userManager.ChangePassword(user, password).ConfigureAwait(false);
+        await _userManager.ChangePasswordAsync(user, password).ConfigureAwait(false);
         await ApplyPolicyAsync(user, record, disabled: false).ConfigureAwait(false);
 
         user = _userManager.GetUserById(user.Id) ?? user;
