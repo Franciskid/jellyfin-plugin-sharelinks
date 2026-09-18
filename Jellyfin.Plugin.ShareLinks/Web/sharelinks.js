@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.3-ui-2';
+    var clientVersion = '1.0.6-ui-1';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -382,6 +382,11 @@
             + ' body.' + guestClassName + ' [data-action="addtoplaylist"],'
             + ' body.' + guestClassName + ' [data-action="addtocollection"],'
             + ' body.' + guestClassName + ' [data-id="playlist"],'
+            // The Modern layout (the default from Jellyfin 12) renders its own header
+            // instead of .skinHeader, so its controls need their own selectors here.
+            + ' body.' + guestClassName + ' .MuiAppBar-root a[href^="#/"],'
+            + ' body.' + guestClassName + ' .MuiAppBar-root [aria-controls="app-user-menu"],'
+            + ' body.' + guestClassName + ' .MuiAppBar-root .MuiToolbar-root > button:first-child,'
             + ' body.' + guestClassName + ' [data-id="addtocollection"] { display: none !important; }'
             // Cards stay clickable so guests can navigate season/episode cards on a shared series;
             // checkAllowedLocation() verifies the destination server-side and redirects if disallowed.
@@ -841,13 +846,22 @@
 
     /**
      * Dismisses the native action sheet so our dialog is not stacked on top of it.
-     * Clicking the sheet's own close button keeps Jellyfin's animation and state
-     * handling; Escape is the fallback when the sheet renders without one.
+     * The sheet's own close button exists only on TV layouts. On desktop, jellyfin-web
+     * closes a sheet when its dialog container gets a mousedown and a click aimed at
+     * the container itself (a click on the backdrop), and ignores Escape outside the
+     * TV layout. Escape stays as the last fallback.
      */
     function closeActionSheet(container) {
         var closeButton = container.querySelector('.btnCloseActionSheet');
         if (closeButton) {
             closeButton.click();
+            return;
+        }
+
+        var dialogContainer = container.closest && container.closest('.dialogContainer');
+        if (dialogContainer) {
+            dialogContainer.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            dialogContainer.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             return;
         }
 
