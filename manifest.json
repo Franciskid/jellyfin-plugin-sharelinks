@@ -9,6 +9,14 @@
         "imageUrl": "",
         "versions": [
             {
+                "version": "1.0.7.0",
+                "changelog": "The ShareLink menu action now shows up on Docker images where the web folder belongs to root but index.html is writable by Jellyfin, such as linuxserver/jellyfin. The plugin used to back up index.html into that folder first and gave up on the whole injection when the copy failed. The backup is now optional. index.html itself still has to be writable by the Jellyfin user. Same build for 10.11 and 12. Tested on the linuxserver 12.1 and 10.11.8 images and the official 12.1 image.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.0.7.0/sharelinks_1.0.7.0.zip",
+                "checksum": "501474826e42468442dd4cdf56e7908b",
+                "timestamp": "2026-09-18T14:00:00Z"
+            },
+            {
                 "version": "1.0.6.0",
                 "changelog": "Fixes share links on Jellyfin 12 (#21). The guest's browser was stuck on the Jellyfin logo: the sign-in page saved the server entry in a form jellyfin-web 12 can't read, so the web client never finished loading. It now saves it the way jellyfin-web does after a normal sign-in. Guests using the new Modern layout, the default in 12, no longer see the home, library and search links or the user menu. The item menu also closes properly when you pick ShareLink. Same build for 10.11 and 12. Tested on 10.11.0, 10.11.5, 10.11.8, 10.11.9, 10.11.11, 12.0 and 12.1.",
                 "targetAbi": "10.11.0.0",
