@@ -70,11 +70,7 @@ public sealed class WebInjectionHostedService : IHostedService
             return;
         }
 
-        var backup = path + ".sharelinks.bak";
-        if (!File.Exists(backup))
-        {
-            File.Copy(path, backup);
-        }
+        TryBackup(path, path + ".sharelinks.bak");
 
         var snippet = "\n" + Begin + "\n<script src=\"/ShareLinks/ClientScript\" defer></script>\n" + End + "\n";
         var bodyIndex = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
@@ -84,4 +80,21 @@ public sealed class WebInjectionHostedService : IHostedService
         _logger.LogInformation("ShareLinks: injected client script into {Path}.", path);
     }
 
+    private void TryBackup(string path, string backup)
+    {
+        // The backup is only a convenience. Some images (linuxserver) make the
+        // web folder root-owned while index.html itself is writable, so a
+        // failed copy must not stop the injection.
+        try
+        {
+            if (!File.Exists(backup))
+            {
+                File.Copy(path, backup);
+            }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            _logger.LogDebug(ex, "ShareLinks: could not back up {Path}, injecting without a backup.", path);
+        }
+    }
 }
