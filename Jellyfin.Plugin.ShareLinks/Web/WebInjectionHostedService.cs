@@ -9,9 +9,11 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.ShareLinks.Web;
 
 /// <summary>
-/// Injects the ShareLinks client script into Jellyfin Web's index.html using
-/// explicit markers so the edit can be applied and removed repeatedly without
-/// drift.
+/// Best-effort extra: injects the ShareLinks client script into Jellyfin Web's
+/// index.html on disk at startup, using explicit markers so the edit can be
+/// applied and removed repeatedly without drift. <see cref="IndexHtmlScriptMiddleware"/>
+/// adds the same tag while Jellyfin serves the page, which is what makes the
+/// guest flow work even when this cannot write to disk.
 /// </summary>
 public sealed class WebInjectionHostedService : IHostedService
 {
@@ -39,7 +41,7 @@ public sealed class WebInjectionHostedService : IHostedService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "ShareLinks: could not inject client script into web index.html.");
+            _logger.LogDebug(ex, "ShareLinks: could not write the script tag into index.html, it is added when the page is served instead.");
         }
 
         return Task.CompletedTask;
@@ -72,7 +74,7 @@ public sealed class WebInjectionHostedService : IHostedService
 
         TryBackup(path, path + ".sharelinks.bak");
 
-        var snippet = "\n" + Begin + "\n<script src=\"/ShareLinks/ClientScript\" defer></script>\n" + End + "\n";
+        var snippet = "\n" + Begin + "\n<script src=\"../ShareLinks/ClientScript\" defer></script>\n" + End + "\n";
         var bodyIndex = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         html = bodyIndex >= 0 ? html.Insert(bodyIndex, snippet) : html + snippet;
 

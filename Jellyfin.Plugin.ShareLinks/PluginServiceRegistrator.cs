@@ -6,6 +6,7 @@ using Jellyfin.Plugin.ShareLinks.Web;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Plugins;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -29,6 +30,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<GuestPluginApiGuard>());
 
         serviceCollection.AddHostedService<WebInjectionHostedService>();
+        serviceCollection.AddTransient<IStartupFilter, IndexHtmlScriptStartupFilter>();
         serviceCollection.AddSingleton<ShareLinkStore>();
         serviceCollection.AddSingleton<ShareTokenService>();
         serviceCollection.AddSingleton<ItemTagService>();
