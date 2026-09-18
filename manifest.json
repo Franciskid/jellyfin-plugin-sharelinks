@@ -9,19 +9,11 @@
         "imageUrl": "",
         "versions": [
             {
-                "version": "1.0.7.0",
-                "changelog": "Bug fix when installing the plugin on a new Docker install.",
-                "targetAbi": "10.11.0.0",
-                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.0.7.0/sharelinks_1.0.7.0.zip",
-                "checksum": "70f8247301c49f09f77abe8c6b9cbd31",
-                "timestamp": "2026-09-18T14:00:00Z"
-            },
-            {
                 "version": "1.0.6.0",
-                "changelog": "Fixes share links on Jellyfin 12 (#21). The guest's browser was stuck on the Jellyfin logo: the sign-in page saved the server entry in a form jellyfin-web 12 can't read, so the web client never finished loading. It now saves it the way jellyfin-web does after a normal sign-in. Guests using the new Modern layout, the default in 12, no longer see the home, library and search links or the user menu. The item menu also closes properly when you pick ShareLink. Same build for 10.11 and 12. Tested on 10.11.0, 10.11.5, 10.11.8, 10.11.9, 10.11.11, 12.0 and 12.1.",
+                "changelog": "Fixes share links on Jellyfin 12 and the ShareLink button missing on new Docker installs.",
                 "targetAbi": "10.11.0.0",
                 "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.0.6.0/sharelinks_1.0.6.0.zip",
-                "checksum": "cfe475cc0c2e78e9d0e63d223c8d6c11",
+                "checksum": "932377bc37c945128d2c46596d838a96",
                 "timestamp": "2026-09-18T10:00:00Z"
             },
             {
