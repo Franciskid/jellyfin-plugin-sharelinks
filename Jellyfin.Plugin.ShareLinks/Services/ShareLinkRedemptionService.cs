@@ -280,6 +280,9 @@ public sealed class ShareLinkRedemptionService
         var infoUrlJson = JsonSerializer.Serialize($"{pathBase}/System/Info/Public");
         var pathBaseJson = JsonSerializer.Serialize(pathBase);
 
+        // jellyfin-web resolves the server address from LastConnectionMode; 2 (Manual) is
+        // what it stores after a normal sign-in. Jellyfin 12 builds its client straight from
+        // this entry, so Remote (1) with no RemoteAddress left the guest on the splash screen.
         return $$"""
 <!doctype html>
 <html lang="en">
@@ -319,7 +322,7 @@ public sealed class ShareLinkRedemptionService
         manualAddressOnly: true,
         Name: info.ServerName || "Jellyfin",
         Id: info.Id,
-        LastConnectionMode: 1,
+        LastConnectionMode: 2,
         AccessToken: accessToken,
         UserId: userId,
         DateLastAccessed: Date.now()

@@ -3,7 +3,7 @@
 Share a movie, episode, season or series with a link. The person you send it to does not need
 an account and can only access what you shared. You choose when the link expires.
 
-`Jellyfin 10.11` · `.NET 9` · `no account for the guest` · `access restricted on the server` · `automatic cleanup`
+`Jellyfin 10.11 and 12` · `.NET 9` · `no account for the guest` · `access restricted on the server` · `automatic cleanup`
 
 ShareLinks adds a **ShareLink** entry to the context menu of any movie, series, season or episode.
 Choose an expiry date and copy the link. Whoever opens it goes straight to the shared title,
@@ -181,8 +181,10 @@ it in `token-secret.key`.
 
 ## Compatibility
 
-Jellyfin **10.11** (`targetAbi 10.11.0.0`), .NET 9. Tested on 10.11.8 and 10.11.11. The web-client injection
-targets the shipped client, in English and in French.
+Jellyfin **10.11** and **12** from a single build (`targetAbi 10.11.0.0`, .NET 9, which Jellyfin 12's
+.NET 10 runtime loads as is). Tested on 10.11.0, 10.11.5, 10.11.8, 10.11.9, 10.11.11, 12.0 and 12.1.
+The web-client injection targets the shipped client, in the Legacy and Modern layouts, in English
+and in French.
 
 ## Workflow
 
