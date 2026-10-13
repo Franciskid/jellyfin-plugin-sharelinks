@@ -141,6 +141,11 @@ to appear.
 is called by the client during playback. Enable access for that plugin in the list. Plugins are blocked by default, including newly
 installed ones.
 
+**On intros and pre-rolls:** guests never get intros. Intro plugins like Local Intros hand out
+videos outside the share, which the guest can't open, so they'd break playback. Any other video
+or audio item a guest couldn't open is also dropped from what the server sends them, whichever
+plugin or endpoint it came from.
+
 **On the cosmetic selectors:** use these to hide elements such as another plugin's floating button.
 This only changes what guests see in the browser. To restrict access, use the plugin access
 settings above.
