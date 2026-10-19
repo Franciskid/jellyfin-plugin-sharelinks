@@ -34,6 +34,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets a value indicating whether shares may remux.</summary>
     public bool AllowRemuxing { get; set; } = true;
 
+    /// <summary>
+    /// Gets or sets the bitrate ceiling, in Mbit/s
+    /// </summary>
+    public int GuestRemoteBitrateLimitMbps { get; set; } = 0;
+
     /// <summary>Gets or sets the cleanup interval, in minutes.</summary>
     public int CleanupIntervalMinutes { get; set; } = 60;
 

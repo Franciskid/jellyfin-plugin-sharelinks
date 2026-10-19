@@ -131,6 +131,7 @@ to appear.
 | Allow transcoding / remuxing | Whether guest playback may transcode or remux | on |
 | Cleanup interval | How often the background cleanup runs | 60 min |
 | Maximum viewers per multi-use link | Concurrent viewers on one multi-use link. 0 means no limit | 10 |
+| Bitrate limit for guests | Caps guest streams from outside the local network, like a user's remote bitrate limit. 0 means no limit | 0 |
 | Single use by default | How the create popup starts | on |
 | Guest lockdown | Hides navigation controls in the guest interface | on |
 | Block other plugins for guests | Blocks guest access to other plugins on the server | on |

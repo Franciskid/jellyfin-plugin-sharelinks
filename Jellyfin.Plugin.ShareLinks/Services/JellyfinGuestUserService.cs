@@ -257,6 +257,11 @@ public sealed class JellyfinGuestUserService
             EnableAudioPlaybackTranscoding = config.AllowTranscoding,
             EnableVideoPlaybackTranscoding = config.AllowTranscoding,
             EnablePlaybackRemuxing = config.AllowRemuxing,
+            // Mbit/s to bit/s. Only while transcoding is allowed: without it Jellyfin
+            // can't bring a stream under the cap and would refuse to play it instead.
+            RemoteClientBitrateLimit = config.AllowTranscoding
+                ? Math.Max(config.GuestRemoteBitrateLimitMbps, 0) * 1_000_000
+                : 0,
             ForceRemoteSourceTranscoding = false,
             EnableContentDeletion = false,
             EnableContentDeletionFromFolders = Array.Empty<string>(),
