@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Data.Queries;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Entities.Security;
 using Jellyfin.Plugin.ShareLinks.Models;
 using MediaBrowser.Controller.Devices;
 using MediaBrowser.Controller.Library;
@@ -17,10 +18,25 @@ namespace Jellyfin.Plugin.ShareLinks.Services;
 public sealed class JellyfinGuestUserService
 {
     /// <summary>
-    /// The app name redemption stamps on a guest session. Used to tell this plugin's
-    /// device rows apart from everything else on the server.
+    /// The app name builds before 1.0.6.2 stamped on a guest session. Only used to
+    /// recognise device rows those builds left behind.
     /// </summary>
-    public const string GuestAppName = "ShareLinks";
+    public const string LegacyGuestAppName = "ShareLinks";
+
+    /// <summary>
+    /// The app name a guest session is minted under. It has to be the one jellyfin-web
+    /// sends, because Jellyfin keys a session on app name plus device id and the
+    /// WebSocket, which can't send headers, falls back to the app name stored with the
+    /// token. Any other name splits the guest across two sessions and SyncPlay messages
+    /// go to the one without a socket.
+    /// </summary>
+    public const string GuestAppName = "Jellyfin Web";
+
+    /// <summary>
+    /// Prefix of every device id redemption hands out. Marks this plugin's device rows
+    /// now that the app name is the web client's own.
+    /// </summary>
+    public const string GuestDeviceIdPrefix = "sharelinks-";
 
     private readonly IUserManager _userManager;
     private readonly IDeviceManager _deviceManager;
@@ -183,7 +199,7 @@ public sealed class JellyfinGuestUserService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.Equals(device.AppName, GuestAppName, StringComparison.Ordinal))
+            if (!IsGuestDevice(device))
             {
                 continue;
             }
@@ -209,6 +225,12 @@ public sealed class JellyfinGuestUserService
         }
 
         return removed;
+    }
+
+    private static bool IsGuestDevice(Device device)
+    {
+        return (device.DeviceId?.StartsWith(GuestDeviceIdPrefix, StringComparison.Ordinal) ?? false)
+            || string.Equals(device.AppName, LegacyGuestAppName, StringComparison.Ordinal);
     }
 
     private User? FindRecordUser(ShareLinkRecord record)

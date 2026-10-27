@@ -147,10 +147,13 @@ public sealed class ShareLinkRedemptionService
         // Jellyfin logs out any existing session for the same user and device id,
         // so every viewer of a multi-use link needs a device id of their own or
         // each new arrival would kick the previous one off. A one-use link has a
-        // single viewer and keeps a stable id.
-        if (!record.OneUse || string.IsNullOrWhiteSpace(record.DeviceId))
+        // single viewer and keeps a stable id. The bootstrap page hands the id to
+        // jellyfin-web so the browser uses it too, see GuestAppName.
+        if (!record.OneUse
+            || string.IsNullOrWhiteSpace(record.DeviceId)
+            || !record.DeviceId.StartsWith(JellyfinGuestUserService.GuestDeviceIdPrefix, StringComparison.Ordinal))
         {
-            record.DeviceId = Guid.NewGuid().ToString("N");
+            record.DeviceId = JellyfinGuestUserService.GuestDeviceIdPrefix + Guid.NewGuid().ToString("N");
         }
 
         record.Status = ShareLinkStatus.Redeeming;
@@ -212,7 +215,7 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
-        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, itemId) };
+        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, itemId, record.DeviceId!) };
     }
 
     /// <summary>
@@ -269,13 +272,14 @@ public sealed class ShareLinkRedemptionService
         }
     }
 
-    private static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, Guid itemId)
+    private static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, Guid itemId, string deviceId)
     {
         var pathBase = request.PathBase.Value ?? string.Empty;
         var redirectUrl = $"{pathBase}/web/index.html#/details?id={Uri.EscapeDataString(itemId.ToString("D"))}";
 
         var accessTokenJson = JsonSerializer.Serialize(authResult.AccessToken);
         var userIdJson = JsonSerializer.Serialize(authResult.User.Id.ToString("N"));
+        var deviceIdJson = JsonSerializer.Serialize(deviceId);
         var redirectUrlJson = JsonSerializer.Serialize(redirectUrl);
         var infoUrlJson = JsonSerializer.Serialize($"{pathBase}/System/Info/Public");
         var pathBaseJson = JsonSerializer.Serialize(pathBase);
@@ -283,6 +287,8 @@ public sealed class ShareLinkRedemptionService
         // jellyfin-web resolves the server address from LastConnectionMode; 2 (Manual) is
         // what it stores after a normal sign-in. Jellyfin 12 builds its client straight from
         // this entry, so Remote (1) with no RemoteAddress left the guest on the splash screen.
+        // _deviceId2 is where jellyfin-web keeps its device id. Giving it the one the token
+        // was minted for keeps the guest's requests and WebSocket on a single session.
         return $$"""
 <!doctype html>
 <html lang="en">
@@ -306,6 +312,7 @@ public sealed class ShareLinkRedemptionService
   const redirectUrl = {{redirectUrlJson}};
   const accessToken = {{accessTokenJson}};
   const userId = {{userIdJson}};
+  const deviceId = {{deviceIdJson}};
 
   document.getElementById("status").textContent = "Opening your title.";
 
@@ -332,6 +339,7 @@ public sealed class ShareLinkRedemptionService
 
   try {
     localStorage.setItem("jellyfin_credentials", JSON.stringify(credentials));
+    localStorage.setItem("_deviceId2", deviceId);
   } catch (_) {
     // If storage is blocked the redirect lands on the login screen.
   }

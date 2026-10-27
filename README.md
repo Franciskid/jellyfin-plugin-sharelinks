@@ -77,6 +77,7 @@ sequenceDiagram
 | The password is generated per redemption and thrown away | This prevents sign-in with a blank password. The browser receives only a session token. |
 | Links are redeemed one request at a time | This prevents two simultaneous requests from both using the same single-use link. |
 | Each multi-use viewer receives its own device id | Jellyfin logs out any session with the same user and device id, so a shared device id would kick out the previous viewer on every new arrival. |
+| The guest session is minted as Jellyfin Web, with the device id the browser then uses | Jellyfin keys a session on app name plus device id. Any mismatch puts the guest's requests and WebSocket on two different sessions, and SyncPlay never tells the browser it joined. |
 | The viewer limit is checked before changing anything | Handling the limit before Jellyfin raises an error lets the plugin turn away a new viewer without interrupting anyone already watching. |
 | Other plugins are blocked by default | The filter distinguishes Jellyfin core from plugin code, so newly installed plugins are blocked too. |
 | Guest devices are deleted before the user | Jellyfin does not remove devices when a user is deleted. Leftover devices can break the admin devices page. |
