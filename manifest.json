@@ -3,11 +3,19 @@
         "guid": "68540b76-ee74-436d-85ff-2abc884bbea6",
         "name": "ShareLinks",
         "description": "Adds secure, expiring guest-share links for Jellyfin items using temporary hidden users, one-use token redemption, restrictive policies, and scheduled cleanup.",
-        "overview": "Temporary guest links for Jellyfin movies and episodes.",
+        "overview": "Temporary guest links and watch parties for anything in your Jellyfin library.",
         "owner": "Franciskid",
         "category": "General",
         "imageUrl": "",
         "versions": [
+            {
+                "version": "1.1.0.0",
+                "changelog": "Share music, photos, books, collections, playlists, folders and Live TV channels, not just movies and series. New \"Watch together\" option: the link opens a SyncPlay group with you and everyone who opens it joins, with only you controlling playback by default. The link ends when the group closes (#25). Also tightens what guests can reach on Jellyfin's own API: other SyncPlay groups, other viewers' sessions on a multi-use link, the user list, and Live TV channels they weren't sent.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.1.0.0/sharelinks_1.1.0.0.zip",
+                "checksum": "315408344507badb753f05a4ec894fc2",
+                "timestamp": "2026-10-28T20:52:53Z"
+            },
             {
                 "version": "1.0.6.2",
                 "changelog": "Fixes SyncPlay for guests (#25). A guest could create a group but never joined it, and the group stayed open until the server restarted. Guests can now create, join and leave SyncPlay groups like any other user, and a group closes when the guest leaves.",
