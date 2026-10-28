@@ -75,4 +75,10 @@ public class PluginConfiguration : BasePluginConfiguration
     /// intro-skip plugin, for instance, is called by the client mid-playback.
     /// </summary>
     public string[] GuestAllowedPluginIds { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Gets or sets a value indicating whether administrators can create watch-party
+    /// links, which put every guest into a SyncPlay group opened for the link.
+    /// </summary>
+    public bool WatchPartyEnabled { get; set; } = true;
 }

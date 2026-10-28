@@ -67,4 +67,19 @@ public sealed class ShareLinkRecord
 
     /// <summary>Gets or sets the share URL issued at creation, for admin display.</summary>
     public string? ShareUrl { get; set; }
+
+    /// <summary>Gets or sets what the share hands out. Older records read back as Video.</summary>
+    public ShareKind Kind { get; set; } = ShareKind.Video;
+
+    /// <summary>Gets or sets a value indicating whether guests join the creator's SyncPlay group.</summary>
+    public bool WatchParty { get; set; }
+
+    /// <summary>Gets or sets the SyncPlay group a watch party is bound to.</summary>
+    public Guid? WatchPartyGroupId { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether only the host may pause, seek or change
+    /// what is playing. Guests can still buffer, which makes the group wait for them.
+    /// </summary>
+    public bool WatchPartyHostOnly { get; set; }
 }

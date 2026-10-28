@@ -7,6 +7,7 @@ using Jellyfin.Plugin.ShareLinks.Models;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.ShareLinks.Services;
@@ -18,6 +19,7 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
     private readonly ILibraryManager _libraryManager;
     private readonly ItemTagService _itemTagService;
     private readonly JellyfinGuestUserService _guestUserService;
+    private readonly WatchPartyService _watchPartyService;
     private readonly ILogger<ShareLinkCleanupService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ShareLinkCleanupService"/> class.</summary>
@@ -26,12 +28,14 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         ILibraryManager libraryManager,
         ItemTagService itemTagService,
         JellyfinGuestUserService guestUserService,
+        WatchPartyService watchPartyService,
         ILogger<ShareLinkCleanupService> logger)
     {
         _store = store;
         _libraryManager = libraryManager;
         _itemTagService = itemTagService;
         _guestUserService = guestUserService;
+        _watchPartyService = watchPartyService;
         _logger = logger;
     }
 
@@ -41,7 +45,81 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         var records = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var record in records)
         {
-            await CleanupRecordInternalAsync(record, records, false, cancellationToken).ConfigureAwait(false);
+            var cleaned = await CleanupRecordInternalAsync(record, records, false, cancellationToken).ConfigureAwait(false);
+            await HealLiveTvTagAsync(cleaned, cancellationToken).ConfigureAwait(false);
+        }
+
+        await EndFinishedWatchPartiesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Tears down every watch party whose SyncPlay group has closed. A group closes
+    /// when its last member leaves, and it cannot be reopened under the same id, so
+    /// the link has nothing left to lead to.
+    /// </summary>
+    public async Task<int> EndFinishedWatchPartiesAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var records = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
+        var ended = 0;
+        foreach (var record in records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!record.WatchParty
+                || !record.WatchPartyGroupId.HasValue
+                || record.ExpiresAtUtc <= now
+                || record.Status is not (ShareLinkStatus.Active or ShareLinkStatus.Redeemed))
+            {
+                continue;
+            }
+
+            if (_watchPartyService.GroupExists(record.WatchPartyGroupId.Value, record.CreatedByUserId))
+            {
+                continue;
+            }
+
+            _logger.LogInformation(
+                "ShareLinks: SyncPlay group {GroupId} closed, ending watch party {RecordId}.",
+                record.WatchPartyGroupId.Value,
+                record.Id);
+            await RevokeAsync(record.Id, cancellationToken).ConfigureAwait(false);
+            ended++;
+        }
+
+        return ended;
+    }
+
+    /// <summary>
+    /// Puts a Live TV share's tag back on its channel. A guide refresh replaces a
+    /// channel's tags with the ones the tuner reports, which would quietly lock the
+    /// guest out until they opened the link again.
+    /// </summary>
+    public async Task HealLiveTvTagAsync(ShareLinkRecord record, CancellationToken cancellationToken)
+    {
+        if (record.Kind != ShareKind.LiveTv
+            || string.IsNullOrWhiteSpace(record.AllowedTag)
+            || record.ExpiresAtUtc <= DateTimeOffset.UtcNow
+            || record.Status is not (ShareLinkStatus.Active or ShareLinkStatus.Redeemed))
+        {
+            return;
+        }
+
+        var item = TryGetItem(record.ItemId);
+        if (item is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (await _itemTagService.EnsureTagAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogInformation("ShareLinks: put the share tag back on channel {ItemId} after a guide refresh.", item.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ShareLinks: could not restore the share tag on channel {ItemId}.", item.Id);
         }
     }
 
@@ -141,6 +219,8 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         record.ShareUrl = null;
 
         var errors = new List<string>();
+        _watchPartyService.ForgetShare(record.Id);
+
         try
         {
             await _guestUserService.DisableGuestUserAsync(record, cancellationToken).ConfigureAwait(false);
@@ -149,6 +229,20 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         {
             errors.Add($"disable:{ex.Message}");
             _logger.LogWarning(ex, "ShareLinks: failed to disable guest user for record {RecordId}.", record.Id);
+        }
+
+        // While the guest's id is still known: a playlist's share list holds it.
+        if (record.Kind == ShareKind.Playlist && record.GuestUserId.HasValue && TryGetItem(record.ItemId) is Playlist playlist)
+        {
+            try
+            {
+                await _guestUserService.RevokePlaylistAsync(playlist, record.GuestUserId.Value, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"playlist:{ex.Message}");
+                _logger.LogWarning(ex, "ShareLinks: failed to take the guest off playlist {ItemId} for record {RecordId}.", record.ItemId, record.Id);
+            }
         }
 
         try
@@ -163,19 +257,19 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
 
         if (!string.IsNullOrWhiteSpace(record.AllowedTag) && !IsTagStillInUse(record, allRecords, now))
         {
+            // Runs even when the shared item is gone: the members of a deleted
+            // collection or playlist still carry the tag, and the library search
+            // inside RemoveTagTreeAsync finds them without it.
             var item = TryGetItem(record.ItemId);
-            if (item is not null)
+            try
             {
-                try
-                {
-                    var removed = await _itemTagService.RemoveTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
-                    record.MetadataTouched |= removed;
-                }
-                catch (Exception ex)
-                {
-                    errors.Add($"tag:{ex.Message}");
-                    _logger.LogWarning(ex, "ShareLinks: failed to remove tag {Tag} from record {RecordId}.", record.AllowedTag, record.Id);
-                }
+                var removed = await _itemTagService.RemoveTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
+                record.MetadataTouched |= removed;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"tag:{ex.Message}");
+                _logger.LogWarning(ex, "ShareLinks: failed to remove tag {Tag} from record {RecordId}.", record.AllowedTag, record.Id);
             }
         }
 

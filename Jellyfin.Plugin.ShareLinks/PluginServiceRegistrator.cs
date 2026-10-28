@@ -33,7 +33,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddTransient<IStartupFilter, IndexHtmlScriptStartupFilter>();
         serviceCollection.AddSingleton<ShareLinkStore>();
         serviceCollection.AddSingleton<ShareTokenService>();
+        serviceCollection.AddSingleton<IItemTreeSource, ItemTreeSource>();
         serviceCollection.AddSingleton<ItemTagService>();
+        serviceCollection.AddSingleton<WatchPartyService>();
         serviceCollection.AddSingleton<JellyfinGuestUserService>();
         serviceCollection.AddSingleton<IAuthenticationProvider, GuestAuthenticationProvider>();
         serviceCollection.AddSingleton<ShareLinkCreationService>();
@@ -41,5 +43,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ShareLinkCleanupService>();
         serviceCollection.AddSingleton<IShareLinkCleanupService>(provider => provider.GetRequiredService<ShareLinkCleanupService>());
         serviceCollection.AddHostedService<StartupCleanupHostedService>();
+        serviceCollection.AddHostedService<WatchPartyMonitorHostedService>();
     }
 }

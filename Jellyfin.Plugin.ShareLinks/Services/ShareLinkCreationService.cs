@@ -37,9 +37,33 @@ public sealed class ShareLinkCreationService
         bool oneUse,
         CancellationToken cancellationToken)
     {
+        return await CreateAsync(item, createdByUserId, expiryHours, oneUse, false, false, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Creates a new share-link record and returns the raw token once. A watch party
+    /// is created without its group; the caller opens the group in the host's
+    /// session and stores its id on the record.
+    /// </summary>
+    public async Task<(ShareLinkRecord Record, string RawToken)> CreateAsync(
+        BaseItem item,
+        Guid createdByUserId,
+        int expiryHours,
+        bool oneUse,
+        bool watchParty,
+        bool watchPartyHostOnly,
+        CancellationToken cancellationToken)
+    {
         if (item is null)
         {
             throw new ArgumentNullException(nameof(item));
+        }
+
+        var kind = ShareableItemPolicy.Classify(item)
+            ?? throw new ArgumentException($"A {item.GetType().Name} cannot be shared.", nameof(item));
+        if (watchParty && !ShareableItemPolicy.SupportsWatchParty(kind))
+        {
+            throw new ArgumentException($"A {kind} share cannot be a watch party.", nameof(watchParty));
         }
 
         var token = await _tokenService.GenerateAsync(cancellationToken).ConfigureAwait(false);
@@ -55,6 +79,9 @@ public sealed class ShareLinkCreationService
             ExpiresAtUtc = now.AddHours(expiryHours),
             Status = ShareLinkStatus.Pending,
             OneUse = oneUse,
+            Kind = kind,
+            WatchParty = watchParty,
+            WatchPartyHostOnly = watchParty && watchPartyHostOnly,
             AllowedTag = $"sharelinks-{Guid.NewGuid():N}",
             CleanupAttempts = 0
         };

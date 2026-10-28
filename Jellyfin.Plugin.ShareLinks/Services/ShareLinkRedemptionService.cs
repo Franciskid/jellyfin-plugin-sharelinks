@@ -8,6 +8,7 @@ using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -36,6 +37,7 @@ public sealed class ShareLinkRedemptionService
     private readonly ItemTagService _itemTagService;
     private readonly JellyfinGuestUserService _guestUserService;
     private readonly ShareLinkCleanupService _cleanupService;
+    private readonly WatchPartyService _watchPartyService;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<ShareLinkRedemptionService> _logger;
     private readonly SemaphoreSlim _redeemGate = new(1, 1);
@@ -48,6 +50,7 @@ public sealed class ShareLinkRedemptionService
         ItemTagService itemTagService,
         JellyfinGuestUserService guestUserService,
         ShareLinkCleanupService cleanupService,
+        WatchPartyService watchPartyService,
         ISessionManager sessionManager,
         ILogger<ShareLinkRedemptionService> logger)
     {
@@ -57,6 +60,7 @@ public sealed class ShareLinkRedemptionService
         _itemTagService = itemTagService;
         _guestUserService = guestUserService;
         _cleanupService = cleanupService;
+        _watchPartyService = watchPartyService;
         _sessionManager = sessionManager;
         _logger = logger;
     }
@@ -102,6 +106,15 @@ public sealed class ShareLinkRedemptionService
 
         if (record.Status == ShareLinkStatus.Revoked || record.Status == ShareLinkStatus.Failed)
         {
+            return new ShareLinkRedemptionResult();
+        }
+
+        // A party whose group has closed is over, even if the monitor has not
+        // noticed yet. The group id is on the record before the URL is handed out.
+        if (record.WatchParty
+            && (!record.WatchPartyGroupId.HasValue || !_watchPartyService.GroupExists(record.WatchPartyGroupId.Value, record.CreatedByUserId)))
+        {
+            await HandleTerminalRecordAsync(record, ShareLinkStatus.Revoked, "The watch party has ended.", cancellationToken).ConfigureAwait(false);
             return new ShareLinkRedemptionResult();
         }
 
@@ -176,6 +189,11 @@ public sealed class ShareLinkRedemptionService
             record.GuestUserId = user.Id;
             record.GuestUserName = user.Username;
 
+            if (item is Playlist playlist)
+            {
+                await _guestUserService.GrantPlaylistAsync(playlist, user.Id, cancellationToken).ConfigureAwait(false);
+            }
+
             authResult = await _sessionManager.AuthenticateDirect(new AuthenticationRequest
             {
                 Username = record.GuestUserName,
@@ -215,7 +233,7 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
-        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, itemId, record.DeviceId!) };
+        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, BuildLandingRoute(item), record.DeviceId!) };
     }
 
     /// <summary>
@@ -272,10 +290,22 @@ public sealed class ShareLinkRedemptionService
         }
     }
 
-    private static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, Guid itemId, string deviceId)
+    /// <summary>
+    /// Where the guest lands. A folder or photo album opens as a list of its
+    /// contents; everything else, collections and channels included, on its page.
+    /// </summary>
+    internal static string BuildLandingRoute(BaseItem item)
+    {
+        var id = Uri.EscapeDataString(item.Id.ToString("D"));
+        return item is PhotoAlbum || item.GetType() == typeof(Folder)
+            ? $"#/list?parentId={id}"
+            : $"#/details?id={id}";
+    }
+
+    internal static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, string landingRoute, string deviceId)
     {
         var pathBase = request.PathBase.Value ?? string.Empty;
-        var redirectUrl = $"{pathBase}/web/index.html#/details?id={Uri.EscapeDataString(itemId.ToString("D"))}";
+        var redirectUrl = $"{pathBase}/web/index.html{landingRoute}";
 
         var accessTokenJson = JsonSerializer.Serialize(authResult.AccessToken);
         var userIdJson = JsonSerializer.Serialize(authResult.User.Id.ToString("N"));

@@ -2,7 +2,7 @@
     var pluginId = '68540b76-ee74-436d-85ff-2abc884bbea6';
     var copyLabel = 'Copy Stream URL';
     var actionLabel = 'ShareLink';
-    var clientVersion = '1.0.6-ui-1';
+    var clientVersion = '1.1.0-ui-2';
     var allowedItemStorageKey = 'sharelinks.allowedItemId';
     var guestClassName = 'sharelinks-guest';
     var hiddenAttr = 'data-sharelinks-hidden';
@@ -17,7 +17,18 @@
     var bootRetry = null;
     var observer = null;
     var menuContext = null;
-    var shareableItemTypes = ['movie', 'series', 'season', 'episode'];
+    // Mirrors ShareableItemPolicy on the server, which has the final say.
+    var shareableItemTypes = [
+        'movie', 'series', 'season', 'episode', 'video', 'musicvideo', 'trailer',
+        'audio', 'musicalbum', 'musicartist', 'audiobook',
+        'photo', 'photoalbum', 'book', 'boxset', 'playlist', 'folder', 'tvchannel'
+    ];
+    // Types SyncPlay can play together. Photos, books and live channels are out.
+    var watchPartyItemTypes = [
+        'movie', 'series', 'season', 'episode', 'video', 'musicvideo', 'trailer',
+        'audio', 'musicalbum', 'musicartist', 'audiobook', 'boxset', 'playlist', 'folder'
+    ];
+    var partyJoin = { state: 'idle', attempts: 0, notSharedShown: false };
     var menuTriggerSelector = '[data-action="menu"], .btnMoreCommands, .btnCardOptions, .cardOverlayButton';
     var itemTypeCache = {};
     var itemTypeInFlight = {};
@@ -80,6 +91,17 @@
             resultCreatedTitle: 'Share link created',
             toastCopied: 'Share link copied.',
             toastManual: 'Select and copy the link manually.',
+            watchPartyLabel: 'Watch together',
+            watchPartyHint: 'Opens a SyncPlay group for you now. Everyone who opens the link joins it and follows your playback. The link stops working when the group closes.',
+            watchPartyHintSingle: 'Opens a SyncPlay group for you now. The person who opens the link joins it and follows your playback. Tick "Let several people use this link" to invite more than one. The link stops working when the group closes.',
+            hostOnlyLabel: 'Only I can pause, seek or change what plays',
+            hostOnlyHint: 'Guests still follow along, and the group still waits for anyone who is buffering.',
+            resultPartyNote: 'You are now in the watch party\'s SyncPlay group. Press play when you are ready and your guests will follow.',
+            resultPartyTitle: 'Watch party link copied',
+            partyJoined: 'You joined the watch party.',
+            partyHostOnly: 'The host controls playback.',
+            partyNotShared: 'The host is playing something that wasn\'t shared with you. You will join as soon as they switch.',
+            partyEnded: 'This watch party has ended.',
             hour: 'hour', hours: 'hours', day: 'day', days: 'days'
         },
         fr: {
@@ -108,6 +130,17 @@
             resultCreatedTitle: 'Lien de partage créé',
             toastCopied: 'Lien de partage copié.',
             toastManual: 'Sélectionnez et copiez le lien manuellement.',
+            watchPartyLabel: 'Regarder ensemble',
+            watchPartyHint: 'Ouvre tout de suite un groupe SyncPlay pour vous. Toutes les personnes qui ouvrent le lien le rejoignent et suivent votre lecture. Le lien cesse de fonctionner quand le groupe se ferme.',
+            watchPartyHintSingle: 'Ouvre tout de suite un groupe SyncPlay pour vous. La personne qui ouvre le lien le rejoint et suit votre lecture. Cochez « Autoriser plusieurs personnes à utiliser ce lien » pour en inviter plusieurs. Le lien cesse de fonctionner quand le groupe se ferme.',
+            hostOnlyLabel: 'Je suis seul à pouvoir mettre en pause, avancer ou changer ce qui est lu',
+            hostOnlyHint: 'Les invités suivent quand même, et le groupe attend toujours ceux qui chargent.',
+            resultPartyNote: 'Vous êtes dans le groupe SyncPlay du visionnage. Lancez la lecture quand vous êtes prêt et vos invités suivront.',
+            resultPartyTitle: 'Lien de visionnage copié',
+            partyJoined: 'Vous avez rejoint le visionnage.',
+            partyHostOnly: 'L\'hôte contrôle la lecture.',
+            partyNotShared: 'L\'hôte lit quelque chose qui ne vous a pas été partagé. Vous rejoindrez dès qu\'il changera.',
+            partyEnded: 'Ce visionnage est terminé.',
             hour: 'heure', hours: 'heures', day: 'jour', days: 'jours'
         }
     };
@@ -311,6 +344,7 @@
         ensurePluginHideStyle(context.hiddenSelectors);
         hideGuestControls();
         hideBlockedGuestMenuItems();
+        maybeJoinWatchParty(context);
 
         // UX-only lockdown: the guest user's real access boundary is still the
         // server-side policy and item tags. This just keeps the web client out
@@ -351,8 +385,73 @@
             username: username,
             prefix: prefix,
             lockdownEnabled: lockdownEnabled,
-            hiddenSelectors: (state && (state.HiddenSelectors || state.hiddenSelectors)) || ''
+            hiddenSelectors: (state && (state.HiddenSelectors || state.hiddenSelectors)) || '',
+            watchParty: !!(state && (state.WatchParty || state.watchParty)),
+            hostOnly: !!(state && (state.WatchPartyHostOnly || state.watchPartyHostOnly))
         };
+    }
+
+    /**
+     * Puts this browser's session into the watch party's SyncPlay group, once per
+     * page load: a reload loses the web client's SyncPlay state, and joining again
+     * is how it gets it back. The server picks the group from the guest's share, so
+     * nothing here says which group to join. It has to wait for the WebSocket,
+     * since that is how the server tells the client it joined.
+     */
+    function maybeJoinWatchParty(context) {
+        if (!context.watchParty || partyJoin.state !== 'idle') {
+            return;
+        }
+
+        partyJoin.state = 'pending';
+        partyJoin.hostOnly = context.hostOnly;
+        attemptPartyJoin();
+    }
+
+    function attemptPartyJoin() {
+        partyJoin.attempts += 1;
+        if (partyJoin.attempts > 120) {
+            partyJoin.state = 'done';
+            return;
+        }
+
+        if (!isWebSocketOpen()) {
+            window.setTimeout(attemptPartyJoin, 1000);
+            return;
+        }
+
+        apiPost('ShareLinks/WatchParty/Join').then(function () {
+            partyJoin.state = 'joined';
+            notify(t('partyJoined') + (partyJoin.hostOnly ? ' ' + t('partyHostOnly') : ''));
+        }).catch(function (error) {
+            var status = error && error.status;
+            if (status === 425) {
+                window.setTimeout(attemptPartyJoin, 1500);
+            } else if (status === 409) {
+                if (!partyJoin.notSharedShown) {
+                    partyJoin.notSharedShown = true;
+                    notify(t('partyNotShared'));
+                }
+                window.setTimeout(attemptPartyJoin, 10000);
+            } else if (status === 410) {
+                partyJoin.state = 'done';
+                notify(t('partyEnded'));
+            } else {
+                partyJoin.state = 'done';
+            }
+        });
+    }
+
+    function isWebSocketOpen() {
+        try {
+            if (window.ApiClient && typeof ApiClient.isWebSocketOpen === 'function') {
+                return ApiClient.isWebSocketOpen();
+            }
+        } catch (error) {
+            // Fall through: the server answers 425 until the socket is up.
+        }
+
+        return true;
     }
 
     function extractAllowedItemId(state) {
@@ -985,7 +1084,9 @@
      */
     function checkAllowedLocation(allowedItemId) {
         var hash = location.hash || '';
-        if (/#\/(?:video|playback)/i.test(hash)) {
+        // The players and the play queue, including music's now-playing page. What
+        // they play was already checked by the server.
+        if (/#\/(?:video|playback|queue|nowplaying)(?:[?/]|$)/i.test(hash)) {
             return true;
         }
 
@@ -1085,11 +1186,15 @@
                 return;
             }
 
-            var result = await chooseExpiryHours(config, function (expiryHours, multiUse) {
+            var itemType = itemTypeCache[String(itemId).toLowerCase()] || '';
+            var partyAllowed = config.WatchPartyEnabled !== false && watchPartyItemTypes.indexOf(itemType) >= 0;
+            var result = await chooseExpiryHours(config, partyAllowed, function (expiryHours, multiUse, party) {
                 var payload = {
                     itemId: itemId,
                     expiryHours: expiryHours,
-                    oneUse: !multiUse
+                    oneUse: !multiUse,
+                    watchParty: !!(party && party.enabled),
+                    hostOnlyControl: !!(party && party.hostOnly)
                 };
 
                 var shareUrlPromise = apiPost('ShareLinks/Admin/Create', payload).then(function (response) {
@@ -1109,7 +1214,8 @@
                         return {
                             shareUrl: shareUrl,
                             copied: copied,
-                            multiUse: !!multiUse
+                            multiUse: !!multiUse,
+                            watchParty: payload.watchParty
                         };
                     });
                 });
@@ -1118,7 +1224,7 @@
                 return;
             }
 
-            showShareResult(result.shareUrl, result.copied, result.multiUse);
+            showShareResult(result.shareUrl, result.copied, result.multiUse, result.watchParty);
         } catch (error) {
             notify(extractErrorMessage(error, t('couldNotCreate')));
         }
@@ -1133,7 +1239,7 @@
             + 'T' + pad2(date.getHours()) + ':' + pad2(date.getMinutes());
     }
 
-    function chooseExpiryHours(config, onChoose) {
+    function chooseExpiryHours(config, partyAllowed, onChoose) {
         var maxHours = clampPositiveInteger(config && config.MaxExpiryHours, 720);
         var options = durationOptions.filter(function (option) {
             return option.hours <= maxHours;
@@ -1162,6 +1268,7 @@
                 hint: buildMultiUseHint(config),
                 checked: !(config && config.OneUseDefault !== false)
             },
+            party: partyAllowed,
             datePicker: {
                 min: toLocalDatetimeValue(minDate),
                 max: toLocalDatetimeValue(maxDate),
@@ -1231,7 +1338,7 @@
         }, 3600);
     }
 
-    function showShareResult(shareUrl, copied, multiUse) {
+    function showShareResult(shareUrl, copied, multiUse, watchParty) {
         ensureShareLinksUi();
         var body = document.createElement('div');
         var note = document.createElement('p');
@@ -1240,6 +1347,13 @@
             ? t('copiedNote')
             : t('notCopiedNote');
         body.appendChild(note);
+
+        if (watchParty) {
+            var partyNote = document.createElement('p');
+            partyNote.className = 'sharelinks-note';
+            partyNote.textContent = t('resultPartyNote');
+            body.appendChild(partyNote);
+        }
 
         if (multiUse) {
             var multiUseNote = document.createElement('p');
@@ -1255,7 +1369,7 @@
         body.appendChild(urlBox);
 
         openModalElement({
-            title: copied ? t('resultCopiedTitle') : t('resultCreatedTitle'),
+            title: watchParty && copied ? t('resultPartyTitle') : (copied ? t('resultCopiedTitle') : t('resultCreatedTitle')),
             bodyElement: body,
             actions: [
                 {
@@ -1323,36 +1437,60 @@
 
         var toggleInput = null;
         if (settings.toggle) {
-            var toggleRow = document.createElement('label');
-            toggleRow.className = 'sharelinks-toggle-row';
+            toggleInput = appendToggle(body, settings.toggle);
+        }
 
-            toggleInput = document.createElement('input');
-            toggleInput.type = 'checkbox';
-            toggleInput.className = 'sharelinks-toggle-input';
-            toggleInput.checked = !!settings.toggle.checked;
+        var partyInput = null;
+        var hostOnlyInput = null;
+        if (settings.party) {
+            partyInput = appendToggle(body, {
+                label: t('watchPartyLabel'),
+                hint: t('watchPartyHint'),
+                checked: false
+            });
+            hostOnlyInput = appendToggle(body, {
+                label: t('hostOnlyLabel'),
+                hint: t('hostOnlyHint'),
+                checked: true,
+                nested: true
+            });
 
-            var toggleText = document.createElement('span');
-            toggleText.className = 'sharelinks-toggle-text';
+            var partyHint = partyInput.closest('label').querySelector('.sharelinks-toggle-hint');
+            var syncParty = function () {
+                hostOnlyInput.disabled = !partyInput.checked;
+                hostOnlyInput.closest('label').style.opacity = partyInput.checked ? '1' : '.45';
+                // A single-use party is a party for one guest. Say so, rather than
+                // promise "everyone" a link that only the first person can open.
+                if (partyHint) {
+                    partyHint.textContent = t(toggleChecked() || !toggleInput ? 'watchPartyHint' : 'watchPartyHintSingle');
+                }
+            };
 
-            var toggleLabel = document.createElement('span');
-            toggleLabel.className = 'sharelinks-toggle-label';
-            toggleLabel.textContent = settings.toggle.label;
-            toggleText.appendChild(toggleLabel);
+            // Most parties are for several people, so turning one on turns the
+            // link multi-use too. It can still be unticked for a party of two.
+            partyInput.addEventListener('change', function () {
+                if (partyInput.checked && toggleInput) {
+                    toggleInput.checked = true;
+                }
 
-            if (settings.toggle.hint) {
-                var toggleHint = document.createElement('span');
-                toggleHint.className = 'sharelinks-toggle-hint';
-                toggleHint.textContent = settings.toggle.hint;
-                toggleText.appendChild(toggleHint);
+                syncParty();
+            });
+            if (toggleInput) {
+                toggleInput.addEventListener('change', syncParty);
             }
 
-            toggleRow.appendChild(toggleInput);
-            toggleRow.appendChild(toggleText);
-            body.appendChild(toggleRow);
+            syncParty();
         }
 
         function toggleChecked() {
             return !!(toggleInput && toggleInput.checked);
+        }
+
+        function partyChoice() {
+            return {
+                enabled: !!(partyInput && partyInput.checked),
+                hostOnly: !!(hostOnlyInput && hostOnlyInput.checked)
+            };
         }
 
         return new Promise(function (resolve) {
@@ -1389,7 +1527,7 @@
                         if (modal) {
                             modal.close();
                         }
-                        resolve(settings.onChoose ? settings.onChoose(hours, toggleChecked()) : hours);
+                        resolve(settings.onChoose ? settings.onChoose(hours, toggleChecked(), partyChoice()) : hours);
                     }
                 });
             }
@@ -1420,7 +1558,7 @@
                 button.addEventListener('click', function () {
                     modal.close();
                     if (settings.onChoose) {
-                        resolve(settings.onChoose(option.hours, toggleChecked()));
+                        resolve(settings.onChoose(option.hours, toggleChecked(), partyChoice()));
                     } else {
                         resolve(option.hours);
                     }
@@ -1428,6 +1566,36 @@
                 grid.appendChild(button);
             });
         });
+    }
+
+    function appendToggle(container, toggle) {
+        var row = document.createElement('label');
+        row.className = toggle.nested ? 'sharelinks-toggle-row is-nested' : 'sharelinks-toggle-row';
+
+        var input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'sharelinks-toggle-input';
+        input.checked = !!toggle.checked;
+
+        var text = document.createElement('span');
+        text.className = 'sharelinks-toggle-text';
+
+        var label = document.createElement('span');
+        label.className = 'sharelinks-toggle-label';
+        label.textContent = toggle.label;
+        text.appendChild(label);
+
+        if (toggle.hint) {
+            var hint = document.createElement('span');
+            hint.className = 'sharelinks-toggle-hint';
+            hint.textContent = toggle.hint;
+            text.appendChild(hint);
+        }
+
+        row.appendChild(input);
+        row.appendChild(text);
+        container.appendChild(row);
+        return input;
     }
 
     function openModalElement(settings) {
@@ -1525,7 +1693,7 @@
         style.textContent = [
             '.sharelinks-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.58);display:grid;place-items:center;padding:24px;opacity:0;transition:opacity .16s ease;}',
             '.sharelinks-overlay.is-visible{opacity:1;}',
-            '.sharelinks-dialog{width:min(520px,100%);background:var(--background-color,#202020);color:var(--text-color,#fff);box-shadow:0 18px 60px rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:22px;}',
+            '.sharelinks-dialog{width:min(520px,100%);max-height:calc(100vh - 48px);overflow-y:auto;box-sizing:border-box;background:var(--background-color,#202020);color:var(--text-color,#fff);box-shadow:0 18px 60px rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:22px;}',
             '.sharelinks-title{font-size:1.25rem;line-height:1.3;margin:0 0 14px;font-weight:600;}',
             '.sharelinks-note{margin:0 0 16px;color:var(--text-secondary-color,#cfcfcf);line-height:1.45;}',
             '.sharelinks-duration-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:4px;}',
@@ -1539,6 +1707,7 @@
             '.sharelinks-date-label{color:var(--text-secondary-color,#cfcfcf);font-size:.92rem;line-height:1.4;}',
             '.sharelinks-date-input{width:100%;box-sizing:border-box;border:1px solid rgba(255,255,255,.2);border-radius:6px;background:rgba(0,0,0,.18);color:inherit;padding:10px 12px;min-height:42px;font:inherit;color-scheme:dark;}',
             '.sharelinks-toggle-row{display:flex;align-items:flex-start;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.12);cursor:pointer;}',
+            '.sharelinks-toggle-row.is-nested{margin-top:10px;padding-top:0;border-top:0;padding-left:28px;}',
             '.sharelinks-toggle-input{margin:2px 0 0;width:18px;height:18px;flex:0 0 auto;accent-color:var(--theme-primary-color,#00a4dc);cursor:pointer;}',
             '.sharelinks-toggle-text{display:flex;flex-direction:column;gap:4px;}',
             '.sharelinks-toggle-label{line-height:1.35;}',
