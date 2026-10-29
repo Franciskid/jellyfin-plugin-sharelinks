@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -15,12 +16,14 @@ namespace Jellyfin.Plugin.ShareLinks.Services;
 public sealed class ItemTagService
 {
     private readonly ILibraryManager _libraryManager;
+    private readonly IItemTreeSource _treeSource;
     private readonly ILogger<ItemTagService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ItemTagService"/> class.</summary>
-    public ItemTagService(ILibraryManager libraryManager, ILogger<ItemTagService> logger)
+    public ItemTagService(ILibraryManager libraryManager, IItemTreeSource treeSource, ILogger<ItemTagService> logger)
     {
         _libraryManager = libraryManager;
+        _treeSource = treeSource;
         _logger = logger;
     }
 
@@ -77,8 +80,8 @@ public sealed class ItemTagService
     }
 
     /// <summary>
-    /// Ensures the supplied tag is present on the item and, when the item is a folder
-    /// such as a series or a season, on everything underneath it, so a guest can
+    /// Ensures the supplied tag is present on the item and on everything the share
+    /// covers below it (see <see cref="BuildTagTreeTargets"/>), so a guest can
     /// browse down through the shared branch instead of only seeing the single node
     /// the link was created on.
     /// </summary>
@@ -107,17 +110,18 @@ public sealed class ItemTagService
     }
 
     /// <summary>
-    /// Removes the supplied tag from the item and, when it is a folder, from
-    /// everything underneath it (mirrors <see cref="EnsureTagTreeAsync"/>).
+    /// Removes the supplied tag from the item, from everything
+    /// <see cref="EnsureTagTreeAsync"/> would have tagged, and from any other item
+    /// still carrying it. The item may be null when it was deleted from the library.
     /// </summary>
-    public async Task<bool> RemoveTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
+    public async Task<bool> RemoveTagTreeAsync(BaseItem? item, string tag, CancellationToken cancellationToken)
     {
-        if (item is null)
+        if (string.IsNullOrWhiteSpace(tag))
         {
-            throw new ArgumentNullException(nameof(item));
+            throw new ArgumentException("Tag cannot be empty.", nameof(tag));
         }
 
-        var targets = BuildTagRemovalTargets(item);
+        var targets = BuildTagRemovalTargets(item, tag);
         var changed = false;
         foreach (var target in targets)
         {
@@ -129,49 +133,102 @@ public sealed class ItemTagService
             "ShareLinks: removed tag {Tag} across {Count} item(s) rooted at {ItemId} \"{ItemName}\".",
             tag,
             targets.Count,
-            item.Id,
-            item.Name);
+            item?.Id,
+            item?.Name);
         return changed;
     }
 
     /// <summary>
-    /// The items that carry a share's tag: the shared item itself and, when it is a
-    /// folder, everything under it.
+    /// The items that carry a share's tag: the shared item, everything physically
+    /// under it, and for a collection, playlist or artist the items it links to and
+    /// everything under those in turn.
     /// </summary>
     /// <remarks>
     /// Never the parents. Jellyfin's <c>GetInheritedTags</c> is an item's own tags
     /// plus every ancestor's, and the guest's AllowedTags policy is matched against
     /// that, so tagging a season's parent series would hand the guest every other
-    /// season of that series as well.
+    /// season of that series as well. For the same reason a library root, a view or
+    /// a plugin folder is never tagged, even when a collection links to one.
     /// </remarks>
-    private static List<BaseItem> BuildTagTreeTargets(BaseItem item)
+    public List<BaseItem> BuildTagTreeTargets(BaseItem item)
     {
-        var targets = new List<BaseItem> { item };
+        ArgumentNullException.ThrowIfNull(item);
 
-        if (item is Folder folder)
+        var targets = new List<BaseItem>();
+        var seen = new HashSet<Guid>();
+        var pending = new Stack<BaseItem>();
+        pending.Push(item);
+
+        while (pending.Count > 0)
         {
-            targets.AddRange(folder.GetRecursiveChildren());
+            var current = pending.Pop();
+            if (ShareableItemPolicy.IsStructural(current) || !seen.Add(current.Id))
+            {
+                continue;
+            }
+
+            targets.Add(current);
+
+            if (current is MusicArtist artist)
+            {
+                foreach (var media in _treeSource.GetArtistMedia(artist))
+                {
+                    pending.Push(media);
+                }
+            }
+
+            if (current is not Folder folder)
+            {
+                continue;
+            }
+
+            foreach (var child in _treeSource.GetPhysicalDescendants(folder))
+            {
+                if (!ShareableItemPolicy.IsStructuralType(child) && seen.Add(child.Id))
+                {
+                    targets.Add(child);
+                }
+            }
+
+            // Linked children are not below the collection or playlist in the
+            // library, so nothing reaches them through inheritance. Each one is
+            // walked in full: a series in a collection needs its episodes too, and
+            // a collection nested in another one its own members. The seen set
+            // stops a collection that links back to itself.
+            foreach (var linked in _treeSource.GetLinkedChildren(folder))
+            {
+                pending.Push(linked);
+            }
         }
 
         return targets;
     }
 
     /// <summary>
-    /// Removal deliberately reaches one level further than tagging does: up to a
-    /// season's parent series. Builds before this fix put the share's tag on that
-    /// series, and taking a tag off can only ever remove access, so cleaning those
-    /// up is safe where applying them was not.
+    /// Removal reaches further than tagging does. Taking a tag off can only ever
+    /// remove access, so it goes everywhere the tag is found: items dropped from a
+    /// collection or playlist since it was shared, and the parent series that
+    /// builds before 1.0.3 tagged along with a shared season.
     /// </summary>
-    private static List<BaseItem> BuildTagRemovalTargets(BaseItem item)
+    private List<BaseItem> BuildTagRemovalTargets(BaseItem? item, string tag)
     {
-        var targets = BuildTagTreeTargets(item);
+        var targets = item is null ? new List<BaseItem>() : BuildTagTreeTargets(item);
+        var seen = new HashSet<Guid>(targets.Select(target => target.Id));
 
         if (item is Season season)
         {
             var series = season.Series ?? season.GetParent() as Series;
-            if (series is not null)
+            if (series is not null && seen.Add(series.Id))
             {
                 targets.Add(series);
+            }
+        }
+
+        foreach (var tagged in _treeSource.GetItemsWithTag(tag))
+        {
+            if (seen.Add(tagged.Id))
+            {
+                targets.Add(tagged);
             }
         }
 

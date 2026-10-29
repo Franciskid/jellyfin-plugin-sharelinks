@@ -8,6 +8,7 @@ using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -36,6 +37,7 @@ public sealed class ShareLinkRedemptionService
     private readonly ItemTagService _itemTagService;
     private readonly JellyfinGuestUserService _guestUserService;
     private readonly ShareLinkCleanupService _cleanupService;
+    private readonly WatchPartyService _watchPartyService;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<ShareLinkRedemptionService> _logger;
     private readonly SemaphoreSlim _redeemGate = new(1, 1);
@@ -48,6 +50,7 @@ public sealed class ShareLinkRedemptionService
         ItemTagService itemTagService,
         JellyfinGuestUserService guestUserService,
         ShareLinkCleanupService cleanupService,
+        WatchPartyService watchPartyService,
         ISessionManager sessionManager,
         ILogger<ShareLinkRedemptionService> logger)
     {
@@ -57,6 +60,7 @@ public sealed class ShareLinkRedemptionService
         _itemTagService = itemTagService;
         _guestUserService = guestUserService;
         _cleanupService = cleanupService;
+        _watchPartyService = watchPartyService;
         _sessionManager = sessionManager;
         _logger = logger;
     }
@@ -105,6 +109,15 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
+        // A party whose group has closed is over, even if the monitor has not
+        // noticed yet. The group id is on the record before the URL is handed out.
+        if (record.WatchParty
+            && (!record.WatchPartyGroupId.HasValue || !_watchPartyService.GroupExists(record.WatchPartyGroupId.Value, record.CreatedByUserId)))
+        {
+            await HandleTerminalRecordAsync(record, ShareLinkStatus.Revoked, "The watch party has ended.", cancellationToken).ConfigureAwait(false);
+            return new ShareLinkRedemptionResult();
+        }
+
         // Checked before any library write: re-tagging the whole tree on every hit
         // to an already-spent link would be a pointless metadata write storm.
         if (record.OneUse && record.Status == ShareLinkStatus.Redeemed)
@@ -147,10 +160,13 @@ public sealed class ShareLinkRedemptionService
         // Jellyfin logs out any existing session for the same user and device id,
         // so every viewer of a multi-use link needs a device id of their own or
         // each new arrival would kick the previous one off. A one-use link has a
-        // single viewer and keeps a stable id.
-        if (!record.OneUse || string.IsNullOrWhiteSpace(record.DeviceId))
+        // single viewer and keeps a stable id. The bootstrap page hands the id to
+        // jellyfin-web so the browser uses it too, see GuestAppName.
+        if (!record.OneUse
+            || string.IsNullOrWhiteSpace(record.DeviceId)
+            || !record.DeviceId.StartsWith(JellyfinGuestUserService.GuestDeviceIdPrefix, StringComparison.Ordinal))
         {
-            record.DeviceId = Guid.NewGuid().ToString("N");
+            record.DeviceId = JellyfinGuestUserService.GuestDeviceIdPrefix + Guid.NewGuid().ToString("N");
         }
 
         record.Status = ShareLinkStatus.Redeeming;
@@ -172,6 +188,11 @@ public sealed class ShareLinkRedemptionService
             var user = await _guestUserService.EnsureGuestUserAsync(record, password, cancellationToken).ConfigureAwait(false);
             record.GuestUserId = user.Id;
             record.GuestUserName = user.Username;
+
+            if (item is Playlist playlist)
+            {
+                await _guestUserService.GrantPlaylistAsync(playlist, user.Id, cancellationToken).ConfigureAwait(false);
+            }
 
             authResult = await _sessionManager.AuthenticateDirect(new AuthenticationRequest
             {
@@ -212,7 +233,7 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
-        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, itemId) };
+        return new ShareLinkRedemptionResult { Html = BuildBootstrapHtml(request, authResult, BuildLandingRoute(item), record.DeviceId!) };
     }
 
     /// <summary>
@@ -269,13 +290,26 @@ public sealed class ShareLinkRedemptionService
         }
     }
 
-    private static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, Guid itemId)
+    /// <summary>
+    /// Where the guest lands. A folder or photo album opens as a list of its
+    /// contents; everything else, collections and channels included, on its page.
+    /// </summary>
+    internal static string BuildLandingRoute(BaseItem item)
+    {
+        var id = Uri.EscapeDataString(item.Id.ToString("D"));
+        return item is PhotoAlbum || item.GetType() == typeof(Folder)
+            ? $"#/list?parentId={id}"
+            : $"#/details?id={id}";
+    }
+
+    internal static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, string landingRoute, string deviceId)
     {
         var pathBase = request.PathBase.Value ?? string.Empty;
-        var redirectUrl = $"{pathBase}/web/index.html#/details?id={Uri.EscapeDataString(itemId.ToString("D"))}";
+        var redirectUrl = $"{pathBase}/web/index.html{landingRoute}";
 
         var accessTokenJson = JsonSerializer.Serialize(authResult.AccessToken);
         var userIdJson = JsonSerializer.Serialize(authResult.User.Id.ToString("N"));
+        var deviceIdJson = JsonSerializer.Serialize(deviceId);
         var redirectUrlJson = JsonSerializer.Serialize(redirectUrl);
         var infoUrlJson = JsonSerializer.Serialize($"{pathBase}/System/Info/Public");
         var pathBaseJson = JsonSerializer.Serialize(pathBase);
@@ -283,6 +317,8 @@ public sealed class ShareLinkRedemptionService
         // jellyfin-web resolves the server address from LastConnectionMode; 2 (Manual) is
         // what it stores after a normal sign-in. Jellyfin 12 builds its client straight from
         // this entry, so Remote (1) with no RemoteAddress left the guest on the splash screen.
+        // _deviceId2 is where jellyfin-web keeps its device id. Giving it the one the token
+        // was minted for keeps the guest's requests and WebSocket on a single session.
         return $$"""
 <!doctype html>
 <html lang="en">
@@ -306,6 +342,7 @@ public sealed class ShareLinkRedemptionService
   const redirectUrl = {{redirectUrlJson}};
   const accessToken = {{accessTokenJson}};
   const userId = {{userIdJson}};
+  const deviceId = {{deviceIdJson}};
 
   document.getElementById("status").textContent = "Opening your title.";
 
@@ -332,6 +369,7 @@ public sealed class ShareLinkRedemptionService
 
   try {
     localStorage.setItem("jellyfin_credentials", JSON.stringify(credentials));
+    localStorage.setItem("_deviceId2", deviceId);
   } catch (_) {
     // If storage is blocked the redirect lands on the login screen.
   }

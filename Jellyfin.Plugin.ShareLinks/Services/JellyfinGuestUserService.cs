@@ -1,13 +1,21 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Data.Queries;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Entities.Security;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.ShareLinks.Models;
 using MediaBrowser.Controller.Devices;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
+using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Users;
 using Microsoft.Extensions.Logging;
 
@@ -17,23 +25,44 @@ namespace Jellyfin.Plugin.ShareLinks.Services;
 public sealed class JellyfinGuestUserService
 {
     /// <summary>
-    /// The app name redemption stamps on a guest session. Used to tell this plugin's
-    /// device rows apart from everything else on the server.
+    /// The app name builds before 1.0.6.2 stamped on a guest session. Only used to
+    /// recognise device rows those builds left behind.
     /// </summary>
-    public const string GuestAppName = "ShareLinks";
+    public const string LegacyGuestAppName = "ShareLinks";
+
+    /// <summary>
+    /// The app name a guest session is minted under. It has to be the one jellyfin-web
+    /// sends, because Jellyfin keys a session on app name plus device id and the
+    /// WebSocket, which can't send headers, falls back to the app name stored with the
+    /// token. Any other name splits the guest across two sessions and SyncPlay messages
+    /// go to the one without a socket.
+    /// </summary>
+    public const string GuestAppName = "Jellyfin Web";
+
+    /// <summary>
+    /// Prefix of every device id redemption hands out. Marks this plugin's device rows
+    /// now that the app name is the web client's own.
+    /// </summary>
+    public const string GuestDeviceIdPrefix = "sharelinks-";
 
     private readonly IUserManager _userManager;
     private readonly IDeviceManager _deviceManager;
+    private readonly ISessionManager _sessionManager;
+    private readonly ILibraryManager _libraryManager;
     private readonly ILogger<JellyfinGuestUserService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="JellyfinGuestUserService"/> class.</summary>
     public JellyfinGuestUserService(
         IUserManager userManager,
         IDeviceManager deviceManager,
+        ISessionManager sessionManager,
+        ILibraryManager libraryManager,
         ILogger<JellyfinGuestUserService> logger)
     {
         _userManager = userManager;
         _deviceManager = deviceManager;
+        _sessionManager = sessionManager;
+        _libraryManager = libraryManager;
         _logger = logger;
     }
 
@@ -135,6 +164,13 @@ public sealed class JellyfinGuestUserService
             // DeviceManager.ToDeviceInfo throw for the WHOLE listing, so one leftover
             // guest 404s the admin dashboard's devices page entirely.
             await DeleteDevicesForUserAsync(user.Id).ConfigureAwait(false);
+
+            // Then the live sessions. A device delete revokes the token but leaves
+            // the session in memory, and a session still sitting in a SyncPlay group
+            // after its user is gone makes the group's access check fail for everyone
+            // else in it: the host could no longer change what is playing. Ending the
+            // session takes it out of its group while the user still resolves.
+            await EndSessionsForUserAsync(user.Id).ConfigureAwait(false);
             await _userManager.DeleteUserAsync(user.Id).ConfigureAwait(false);
             _logger.LogInformation("ShareLinks: deleted guest user {UserName} for record {RecordId}.", user.Username, record.Id);
         }
@@ -143,6 +179,66 @@ public sealed class JellyfinGuestUserService
             _logger.LogWarning(ex, "ShareLinks: failed to delete guest user {UserName} for record {RecordId}.", user.Username, record.Id);
             throw;
         }
+    }
+
+    /// <summary>Ends every live session of a guest account.</summary>
+    public async Task EndSessionsForUserAsync(Guid userId)
+    {
+        var sessionIds = _sessionManager.Sessions
+            .Where(session => session.UserId.Equals(userId))
+            .Select(session => session.Id)
+            .ToArray();
+
+        foreach (var sessionId in sessionIds)
+        {
+            try
+            {
+                await _sessionManager.ReportSessionEnded(sessionId).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ShareLinks: failed to end session {SessionId} of guest {UserId}.", sessionId, userId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lets the guest open a shared playlist. Jellyfin decides who can see a playlist
+    /// from its share list, not from tags, so the tag alone is not enough. The guest
+    /// is added read-only. Saved as a metadata edit, so the playlist file keeps it
+    /// across a library scan, the same way a share made in the web client would.
+    /// </summary>
+    public async Task GrantPlaylistAsync(Playlist playlist, Guid guestUserId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(playlist);
+
+        var shares = (playlist.Shares ?? Array.Empty<PlaylistUserPermissions>()).ToList();
+        if (shares.Any(share => share.UserId.Equals(guestUserId) && !share.CanEdit))
+        {
+            return;
+        }
+
+        shares.RemoveAll(share => share.UserId.Equals(guestUserId));
+        shares.Add(new PlaylistUserPermissions(guestUserId, false));
+        playlist.Shares = shares;
+        await _libraryManager.UpdateItemAsync(playlist, playlist.GetParent() ?? playlist, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("ShareLinks: gave guest {UserId} read access to playlist {PlaylistId}.", guestUserId, playlist.Id);
+    }
+
+    /// <summary>Takes a guest back off a playlist's share list.</summary>
+    public async Task RevokePlaylistAsync(Playlist playlist, Guid guestUserId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(playlist);
+
+        var shares = (playlist.Shares ?? Array.Empty<PlaylistUserPermissions>()).ToList();
+        if (shares.RemoveAll(share => share.UserId.Equals(guestUserId)) == 0)
+        {
+            return;
+        }
+
+        playlist.Shares = shares;
+        await _libraryManager.UpdateItemAsync(playlist, playlist.GetParent() ?? playlist, ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("ShareLinks: removed guest {UserId} from playlist {PlaylistId}.", guestUserId, playlist.Id);
     }
 
     /// <summary>Removes every device row belonging to a guest account.</summary>
@@ -183,7 +279,7 @@ public sealed class JellyfinGuestUserService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!string.Equals(device.AppName, GuestAppName, StringComparison.Ordinal))
+            if (!IsGuestDevice(device))
             {
                 continue;
             }
@@ -211,6 +307,12 @@ public sealed class JellyfinGuestUserService
         return removed;
     }
 
+    private static bool IsGuestDevice(Device device)
+    {
+        return (device.DeviceId?.StartsWith(GuestDeviceIdPrefix, StringComparison.Ordinal) ?? false)
+            || string.Equals(device.AppName, LegacyGuestAppName, StringComparison.Ordinal);
+    }
+
     private User? FindRecordUser(ShareLinkRecord record)
     {
         if (record.GuestUserId.HasValue)
@@ -229,14 +331,27 @@ public sealed class JellyfinGuestUserService
 
     private async Task ApplyPolicyAsync(User user, ShareLinkRecord record, bool disabled)
     {
-        var config = Plugin.Instance!.Configuration;
-        var policy = new UserPolicy
+        var policy = BuildPolicy(record, disabled, user.PasswordResetProviderId);
+        await _userManager.UpdatePolicyAsync(user.Id, policy).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The guest account's policy. Everything is off unless the share needs it, and
+    /// what a share needs depends on its kind: Live TV access only for a channel
+    /// share, downloads only for a book, which the reader opens as a file.
+    /// </summary>
+    public static UserPolicy BuildPolicy(ShareLinkRecord record, bool disabled, string? passwordResetProviderId)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        return new UserPolicy
         {
             // Hand the account to a provider that refuses interactive sign-in. If the
             // plugin is ever disabled the id stops resolving and Jellyfin falls back to
             // its own InvalidAuthProvider, which also refuses, so this fails closed.
             AuthenticationProviderId = GuestAuthenticationProvider.ProviderId,
-            PasswordResetProviderId = user.PasswordResetProviderId,
+            PasswordResetProviderId = passwordResetProviderId ?? string.Empty,
             AllowedTags = string.IsNullOrWhiteSpace(record.AllowedTag)
                 ? Array.Empty<string>()
                 : new[] { record.AllowedTag! },
@@ -252,7 +367,7 @@ public sealed class JellyfinGuestUserService
             EnableRemoteAccess = true,
             EnableRemoteControlOfOtherUsers = false,
             EnableLiveTvManagement = false,
-            EnableLiveTvAccess = false,
+            EnableLiveTvAccess = record.Kind == ShareKind.LiveTv,
             EnableMediaPlayback = true,
             EnableAudioPlaybackTranscoding = config.AllowTranscoding,
             EnableVideoPlaybackTranscoding = config.AllowTranscoding,
@@ -265,7 +380,7 @@ public sealed class JellyfinGuestUserService
             ForceRemoteSourceTranscoding = false,
             EnableContentDeletion = false,
             EnableContentDeletionFromFolders = Array.Empty<string>(),
-            EnableContentDownloading = false,
+            EnableContentDownloading = record.Kind == ShareKind.Book,
             EnableSyncTranscoding = false,
             EnableMediaConversion = false,
             EnableAllChannels = false,
@@ -279,10 +394,17 @@ public sealed class JellyfinGuestUserService
             // One viewer for a one-use link. A multi-use link gets the configured
             // ceiling, where 0 is how Jellyfin spells "no limit" in its session check.
             MaxActiveSessions = record.OneUse ? 1 : Math.Max(config.MaxConcurrentViewers, 0),
-            BlockUnratedItems = Array.Empty<UnratedItem>()
+            BlockUnratedItems = Array.Empty<UnratedItem>(),
+            // A watch-party guest joins the host's group and nothing else, so it can
+            // not create one. Other guests of a playable share keep SyncPlay; the
+            // guard keeps them to groups their own share created. Shares with
+            // nothing SyncPlay can play get none.
+            SyncPlayAccess = record.WatchParty
+                ? SyncPlayUserAccessType.JoinGroups
+                : ShareableItemPolicy.SupportsWatchParty(record.Kind)
+                    ? SyncPlayUserAccessType.CreateAndJoinGroups
+                    : SyncPlayUserAccessType.None
         };
-
-        await _userManager.UpdatePolicyAsync(user.Id, policy).ConfigureAwait(false);
     }
 
     private static string Base64UrlEncode(ReadOnlySpan<byte> bytes)

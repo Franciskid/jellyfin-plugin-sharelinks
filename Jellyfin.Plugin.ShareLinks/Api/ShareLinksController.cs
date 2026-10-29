@@ -12,10 +12,8 @@ using Jellyfin.Plugin.ShareLinks.Models;
 using Jellyfin.Plugin.ShareLinks.Services;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Common.Plugins;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -34,6 +32,12 @@ public sealed class ShareLinkCreateRequest
 
     /// <summary>Gets or sets whether the link may be redeemed once only.</summary>
     public bool? OneUse { get; set; }
+
+    /// <summary>Gets or sets whether guests join a SyncPlay group opened in the creator's session.</summary>
+    public bool? WatchParty { get; set; }
+
+    /// <summary>Gets or sets whether only the host may pause, seek or change what plays in the party.</summary>
+    public bool? HostOnlyControl { get; set; }
 }
 
 /// <summary>Admin response for a created ShareLinks record.</summary>
@@ -82,6 +86,12 @@ public sealed class ShareLinkAdminRecordDto
     public string? CleanupError { get; set; }
 
     public string? ShareUrl { get; set; }
+
+    public ShareKind Kind { get; set; }
+
+    public bool WatchParty { get; set; }
+
+    public bool WatchPartyHostOnly { get; set; }
 }
 
 /// <summary>Guest session state returned to the web client.</summary>
@@ -98,6 +108,12 @@ public sealed class ShareLinkGuestStateDto
     public bool LockdownEnabled { get; set; }
 
     public string? HiddenSelectors { get; set; }
+
+    public ShareKind? Kind { get; set; }
+
+    public bool WatchParty { get; set; }
+
+    public bool WatchPartyHostOnly { get; set; }
 }
 
 /// <summary>An installed plugin, as offered in the guard's exception list.</summary>
@@ -123,6 +139,7 @@ public sealed class ShareLinksController : ControllerBase
     private readonly ShareLinkCleanupService _cleanupService;
     private readonly ShareLinkRedemptionService _redemptionService;
     private readonly ShareLinkStore _store;
+    private readonly WatchPartyService _watchPartyService;
     private readonly IPluginManager _pluginManager;
     private readonly ILogger<ShareLinksController> _logger;
 
@@ -133,6 +150,7 @@ public sealed class ShareLinksController : ControllerBase
         ShareLinkCleanupService cleanupService,
         ShareLinkRedemptionService redemptionService,
         ShareLinkStore store,
+        WatchPartyService watchPartyService,
         IPluginManager pluginManager,
         ILogger<ShareLinksController> logger)
     {
@@ -141,6 +159,7 @@ public sealed class ShareLinksController : ControllerBase
         _cleanupService = cleanupService;
         _redemptionService = redemptionService;
         _store = store;
+        _watchPartyService = watchPartyService;
         _pluginManager = pluginManager;
         _logger = logger;
     }
@@ -220,21 +239,67 @@ public sealed class ShareLinksController : ControllerBase
             return NotFound(new { error = "Item not found." });
         }
 
-        if (!IsShareableItem(item))
+        var kind = ShareableItemPolicy.Classify(item);
+        if (!kind.HasValue)
         {
             _logger.LogWarning(
-                "ShareLinks: create rejected, item {ItemId} \"{ItemName}\" is a {ItemType}, which is not shareable media.",
+                "ShareLinks: create rejected, item {ItemId} \"{ItemName}\" is a {ItemType}, which cannot be shared.",
                 itemId,
                 item.Name,
                 item.GetType().Name);
-            return BadRequest(new { error = "Only a movie, series, season or episode can be shared. Open the title's page and try again." });
+            return BadRequest(new { error = "This can't be shared. Share a title, a track, an album, a photo, a book, a collection, a playlist, a folder or a Live TV channel." });
+        }
+
+        var watchParty = request.WatchParty == true;
+        SessionInfo? hostSession = null;
+        var creatorUserId = GetCurrentUserId();
+        if (watchParty)
+        {
+            if (!config.WatchPartyEnabled)
+            {
+                return BadRequest(new { error = "Watch parties are turned off in the ShareLinks settings." });
+            }
+
+            if (!ShareableItemPolicy.SupportsWatchParty(kind.Value))
+            {
+                return BadRequest(new { error = "Only something that plays can be watched together." });
+            }
+
+            hostSession = await _watchPartyService.GetRequestSessionAsync(HttpContext, creatorUserId).ConfigureAwait(false);
+            if (hostSession is null)
+            {
+                return BadRequest(new { error = "Start the watch party from the web client, so it can open a SyncPlay group for you." });
+            }
         }
 
         try
         {
-            var creatorUserId = GetCurrentUserId();
             var oneUse = request.OneUse ?? config.OneUseDefault;
-            var creation = await _creationService.CreateAsync(item, creatorUserId, expiryHours, oneUse, cancellationToken).ConfigureAwait(false);
+            var creation = await _creationService.CreateAsync(
+                item,
+                creatorUserId,
+                expiryHours,
+                oneUse,
+                watchParty,
+                request.HostOnlyControl ?? true,
+                cancellationToken).ConfigureAwait(false);
+
+            if (hostSession is not null)
+            {
+                try
+                {
+                    creation.Record.WatchPartyGroupId = _watchPartyService.StartGroup(hostSession, item.Name ?? string.Empty, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    // A party without a group would be torn down on first use anyway;
+                    // do it now and say so, rather than hand out a dead link.
+                    _logger.LogWarning(ex, "ShareLinks: could not open a SyncPlay group for record {RecordId}.", creation.Record.Id);
+                    await _cleanupService.RevokeAsync(creation.Record.Id, cancellationToken).ConfigureAwait(false);
+                    return StatusCode(500, new { error = "Could not open a SyncPlay group for the watch party." });
+                }
+            }
+
             var shareUrl = BuildShareUrl(Request, creation.RawToken);
             creation.Record.ShareUrl = shareUrl;
             await _store.UpdateAsync(creation.Record, cancellationToken).ConfigureAwait(false);
@@ -249,6 +314,31 @@ public sealed class ShareLinksController : ControllerBase
             _logger.LogWarning(ex, "ShareLinks: create failed for item {ItemId}.", itemId);
             return StatusCode(500, new { error = "Failed to create share link." });
         }
+    }
+
+    /// <summary>
+    /// Puts the calling guest's session into their watch party. The group comes from
+    /// the share the guest account belongs to, never from the request.
+    /// </summary>
+    [HttpPost("WatchParty/Join")]
+    [Authorize(AuthenticationSchemes = "CustomAuthentication")]
+    public async Task<ActionResult> JoinWatchParty(CancellationToken cancellationToken)
+    {
+        SetNoStoreHeaders();
+        if (!Config.Enabled)
+        {
+            return StatusCode(503, new { error = "ShareLinks is disabled." });
+        }
+
+        var result = await _watchPartyService.JoinAsync(GetCurrentUserId(), HttpContext, cancellationToken).ConfigureAwait(false);
+        return result switch
+        {
+            WatchPartyJoinResult.Joined => Ok(new { status = "joined" }),
+            WatchPartyJoinResult.Ended => StatusCode(StatusCodes.Status410Gone, new { status = "ended" }),
+            WatchPartyJoinResult.NotShared => Conflict(new { status = "notShared" }),
+            WatchPartyJoinResult.NotConnected => StatusCode(425, new { status = "notConnected" }),
+            _ => NotFound(new { status = "notAParty" })
+        };
     }
 
     /// <summary>Lists all share links for administrators.</summary>
@@ -359,6 +449,7 @@ public sealed class ShareLinksController : ControllerBase
 
             if (match is not null)
             {
+                await _cleanupService.HealLiveTvTagAsync(match, cancellationToken).ConfigureAwait(false);
                 return Ok(new ShareLinkGuestStateDto
                 {
                     IsGuest = true,
@@ -366,7 +457,10 @@ public sealed class ShareLinksController : ControllerBase
                     ShareId = match.Id,
                     ExpiresAtUtc = match.ExpiresAtUtc,
                     LockdownEnabled = config.GuestModeLockdownEnabled,
-                    HiddenSelectors = config.GuestHiddenSelectors
+                    HiddenSelectors = config.GuestHiddenSelectors,
+                    Kind = match.Kind,
+                    WatchParty = match.WatchParty,
+                    WatchPartyHostOnly = match.WatchPartyHostOnly
                 });
             }
         }
@@ -508,7 +602,10 @@ setTimeout(function () { window.location.replace({{redirectUrlJson}}); }, 4000);
             MetadataTouched = record.MetadataTouched,
             CleanupAttempts = record.CleanupAttempts,
             CleanupError = record.CleanupError,
-            ShareUrl = record.ShareUrl
+            ShareUrl = record.ShareUrl,
+            Kind = record.Kind,
+            WatchParty = record.WatchParty,
+            WatchPartyHostOnly = record.WatchPartyHostOnly
         };
     }
 
@@ -523,17 +620,6 @@ setTimeout(function () { window.location.replace({{redirectUrlJson}}); }, 4000);
         return User.FindFirst("Jellyfin-UserName")?.Value
             ?? User.FindFirst(ClaimTypes.Name)?.Value
             ?? User.Identity?.Name;
-    }
-
-    /// <summary>
-    /// Only real video titles are shareable. Anything else - a person, studio,
-    /// genre, library, collection, playlist, music track or book - would either
-    /// give the guest nothing to play or pull unrelated items into the guest's tag
-    /// policy, so the API refuses it even when a client asks for it.
-    /// </summary>
-    private static bool IsShareableItem(BaseItem item)
-    {
-        return item is Movie or Series or Season or Episode;
     }
 
     private static bool IsExpired(ShareLinkRecord record)

@@ -27,6 +27,12 @@ public sealed class ShareLinkStore
     private readonly ILogger<ShareLinkStore> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    // The last bytes read from or written to disk. Every read deserializes a fresh
+    // copy, so callers can still change what they get without touching the store,
+    // but the guard can look a guest up on every SyncPlay ping without disk I/O.
+    // Only this class writes the file, so the copy stays current.
+    private byte[]? _cached;
+
     /// <summary>Initializes a new instance of the <see cref="ShareLinkStore"/> class.</summary>
     public ShareLinkStore(IApplicationPaths applicationPaths, ILogger<ShareLinkStore> logger)
     {
@@ -68,6 +74,26 @@ public sealed class ShareLinkStore
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Gets the live share a guest account belongs to: not expired, and in a state
+    /// where its guest may still be signed in. Null for anyone else.
+    /// </summary>
+    public async Task<ShareLinkRecord?> GetActiveByGuestUserIdAsync(Guid guestUserId, CancellationToken cancellationToken = default)
+    {
+        if (guestUserId.Equals(Guid.Empty))
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var records = await ListAsync(cancellationToken).ConfigureAwait(false);
+        return records.FirstOrDefault(record =>
+            record.GuestUserId.HasValue
+            && record.GuestUserId.Value.Equals(guestUserId)
+            && record.ExpiresAtUtc > now
+            && record.Status is ShareLinkStatus.Active or ShareLinkStatus.Redeeming or ShareLinkStatus.Redeemed);
     }
 
     /// <summary>Gets a share link by id.</summary>
@@ -146,25 +172,22 @@ public sealed class ShareLinkStore
     {
         try
         {
-            if (!File.Exists(_path))
+            if (_cached is null)
             {
-                return new List<ShareLinkRecord>();
+                if (!File.Exists(_path))
+                {
+                    return new List<ShareLinkRecord>();
+                }
+
+                _cached = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
             }
 
-            await using var stream = new FileStream(
-                _path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 4096,
-                options: FileOptions.Asynchronous | FileOptions.SequentialScan);
-
-            return (await JsonSerializer.DeserializeAsync<List<ShareLinkRecord>>(stream, JsonOptions, cancellationToken)
-                .ConfigureAwait(false)) ?? new List<ShareLinkRecord>();
+            return JsonSerializer.Deserialize<List<ShareLinkRecord>>(_cached, JsonOptions) ?? new List<ShareLinkRecord>();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "ShareLinks: could not read the record store.");
+            _cached = null;
             return new List<ShareLinkRecord>();
         }
     }
@@ -181,6 +204,7 @@ public sealed class ShareLinkStore
         var tempPath = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(ordered, JsonOptions);
             await using (var stream = new FileStream(
                 tempPath,
                 FileMode.CreateNew,
@@ -189,15 +213,17 @@ public sealed class ShareLinkStore
                 bufferSize: 4096,
                 options: FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await JsonSerializer.SerializeAsync(stream, ordered, JsonOptions, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
             File.Move(tempPath, _path, overwrite: true);
+            _cached = bytes;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "ShareLinks: could not write the record store.");
+            _cached = null;
             try
             {
                 if (File.Exists(tempPath))
