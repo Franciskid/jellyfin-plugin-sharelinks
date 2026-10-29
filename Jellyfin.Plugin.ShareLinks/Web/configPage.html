@@ -158,6 +158,11 @@
                             </label>
                         </div>
 
+                        <div class="sl-field inputContainer hide" id="GuestRemoteBitrateLimitField">
+                            <input is="emby-input" type="number" id="GuestRemoteBitrateLimitMbps" label="Bitrate limit for guests (Mbit/s)" min="0" max="2000" />
+                            <div class="fieldDescription">Caps the stream bitrate for guests connecting from outside your local network, like the remote bitrate limit on a regular user. Streams above it are transcoded down, once per guest. 0 uses the server's own Internet streaming limit, which is none unless you set one.</div>
+                        </div>
+
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="AllowRemuxing" />
@@ -247,15 +252,24 @@
                     page.querySelector('#GuestHiddenSelectors').value = cfg.GuestHiddenSelectors != null ? cfg.GuestHiddenSelectors : '';
                     page.querySelector('#AllowTranscoding').checked = cfg.AllowTranscoding !== false;
                     page.querySelector('#AllowRemuxing').checked = cfg.AllowRemuxing !== false;
+                    page.querySelector('#GuestRemoteBitrateLimitMbps').value = cfg.GuestRemoteBitrateLimitMbps || 0;
                     page.querySelector('#CleanupIntervalMinutes').value = cfg.CleanupIntervalMinutes || 60;
                     page.querySelector('#OneUseDefault').checked = cfg.OneUseDefault !== false;
                     page.querySelector('#WatchPartyEnabled').checked = cfg.WatchPartyEnabled !== false;
                     page.querySelector('#MaxConcurrentViewers').value = cfg.MaxConcurrentViewers === undefined ? 10 : cfg.MaxConcurrentViewers;
                     page.querySelector('#GuestModeLockdownEnabled').checked = cfg.GuestModeLockdownEnabled !== false;
                     page.querySelector('#GuestPluginApiGuardEnabled').checked = cfg.GuestPluginApiGuardEnabled !== false;
+                    syncBitrateLimitField();
                 }).finally(function () {
                     Dashboard.hideLoadingMsg();
                 });
+            }
+
+            // The cap is ignored while transcoding is off, so only show the field
+            // while it is on. The value is kept, so switching transcoding back on
+            // brings it back as it was.
+            function syncBitrateLimitField() {
+                page.querySelector('#GuestRemoteBitrateLimitField').classList.toggle('hide', !page.querySelector('#AllowTranscoding').checked);
             }
 
             // The ticked state comes from the server rather than from the config we
@@ -491,6 +505,7 @@
                     cfg.GuestHiddenSelectors = page.querySelector('#GuestHiddenSelectors').value;
                     cfg.AllowTranscoding = page.querySelector('#AllowTranscoding').checked;
                     cfg.AllowRemuxing = page.querySelector('#AllowRemuxing').checked;
+                    cfg.GuestRemoteBitrateLimitMbps = Math.min(Math.max(parseInt(page.querySelector('#GuestRemoteBitrateLimitMbps').value, 10) || 0, 0), 2000);
                     cfg.CleanupIntervalMinutes = parseInt(page.querySelector('#CleanupIntervalMinutes').value, 10) || 60;
                     cfg.OneUseDefault = page.querySelector('#OneUseDefault').checked;
                     cfg.WatchPartyEnabled = page.querySelector('#WatchPartyEnabled').checked;
@@ -516,6 +531,10 @@
             document.querySelector('#ShareLinksConfigPage').addEventListener('pageshow', function () {
                 page = this;
                 loadConfig().then(loadPlugins).then(loadLinks);
+            });
+
+            document.querySelector('#AllowTranscoding').addEventListener('change', function () {
+                syncBitrateLimitField();
             });
 
             document.querySelector('#ShareLinksConfigForm').addEventListener('submit', save);

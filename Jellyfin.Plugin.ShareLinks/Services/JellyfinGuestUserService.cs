@@ -45,6 +45,9 @@ public sealed class JellyfinGuestUserService
     /// </summary>
     public const string GuestDeviceIdPrefix = "sharelinks-";
 
+    /// <summary>The highest guest bitrate limit the config page offers, in Mbit/s.</summary>
+    public const int MaxGuestRemoteBitrateLimitMbps = 2000;
+
     private readonly IUserManager _userManager;
     private readonly IDeviceManager _deviceManager;
     private readonly ISessionManager _sessionManager;
@@ -372,6 +375,7 @@ public sealed class JellyfinGuestUserService
             EnableAudioPlaybackTranscoding = config.AllowTranscoding,
             EnableVideoPlaybackTranscoding = config.AllowTranscoding,
             EnablePlaybackRemuxing = config.AllowRemuxing,
+            RemoteClientBitrateLimit = RemoteBitrateLimit(config),
             ForceRemoteSourceTranscoding = false,
             EnableContentDeletion = false,
             EnableContentDeletionFromFolders = Array.Empty<string>(),
@@ -400,6 +404,25 @@ public sealed class JellyfinGuestUserService
                     ? SyncPlayUserAccessType.CreateAndJoinGroups
                     : SyncPlayUserAccessType.None
         };
+    }
+
+    /// <summary>
+    /// The guests' remote bitrate limit in bit/s, as Jellyfin's user policy takes it.
+    /// 0 when transcoding is off: Jellyfin couldn't bring a stream under the cap and
+    /// would refuse to play it instead. 0 also leaves the server's own Internet
+    /// streaming limit in charge.
+    /// </summary>
+    public static int RemoteBitrateLimit(Configuration.PluginConfiguration config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        if (!config.AllowTranscoding)
+        {
+            return 0;
+        }
+
+        // Clamped to what the config page offers, which also keeps the product in an int.
+        return Math.Clamp(config.GuestRemoteBitrateLimitMbps, 0, MaxGuestRemoteBitrateLimitMbps) * 1_000_000;
     }
 
     private static string Base64UrlEncode(ReadOnlySpan<byte> bytes)

@@ -34,6 +34,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets a value indicating whether shares may remux.</summary>
     public bool AllowRemuxing { get; set; } = true;
 
+    /// <summary>
+    /// Gets or sets the bitrate limit for guests outside the local network, in Mbit/s.
+    /// 0 leaves Jellyfin's own Internet streaming limit in charge.
+    /// </summary>
+    public int GuestRemoteBitrateLimitMbps { get; set; } = 0;
+
     /// <summary>Gets or sets the cleanup interval, in minutes.</summary>
     public int CleanupIntervalMinutes { get; set; } = 60;
 

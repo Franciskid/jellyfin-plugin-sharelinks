@@ -112,6 +112,30 @@ public sealed class JellyfinGuestUserServiceTests
     }
 
     [Fact]
+    public void NoBitrateLimitUnlessOneIsSet()
+    {
+        Assert.Equal(0, JellyfinGuestUserService.BuildPolicy(TestSupport.ActiveRecord(Guid.NewGuid()), false, null).RemoteClientBitrateLimit);
+    }
+
+    [Theory]
+    [InlineData(true, 0, 0)]
+    [InlineData(true, 8, 8_000_000)]
+    [InlineData(true, -5, 0)]
+    [InlineData(true, 2000, 2_000_000_000)]
+    [InlineData(true, 5000, 2_000_000_000)]
+    [InlineData(false, 8, 0)]
+    public void BitrateLimitIsInBitsAndOnlyWithTranscoding(bool transcoding, int mbps, int expected)
+    {
+        var config = new Configuration.PluginConfiguration
+        {
+            AllowTranscoding = transcoding,
+            GuestRemoteBitrateLimitMbps = mbps
+        };
+
+        Assert.Equal(expected, JellyfinGuestUserService.RemoteBitrateLimit(config));
+    }
+
+    [Fact]
     public async Task SessionsEndBeforeTheGuestIsDeletedAndNobodyElseIsTouched()
     {
         var guest = TestSupport.Guest();

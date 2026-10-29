@@ -188,6 +188,7 @@ to appear.
 | Public base URL override | Forces the host used to build links, instead of the request host | derived |
 | Guest username prefix | Prefix for the temporary accounts | `share-` |
 | Allow transcoding / remuxing | Whether guest playback may transcode or remux | on |
+| Bitrate limit for guests | Caps guest streams from outside the local network, like a user's remote bitrate limit. Shown while transcoding is on. 0 uses the server's own Internet streaming limit | 0 |
 | Cleanup interval | How often the background cleanup runs | 60 min |
 | Maximum viewers per multi-use link | Concurrent viewers on one multi-use link. 0 means no limit | 10 |
 | Single use by default | How the create popup starts | on |
