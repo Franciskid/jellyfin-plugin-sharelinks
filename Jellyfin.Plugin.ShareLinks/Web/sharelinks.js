@@ -396,7 +396,10 @@
      * page load: a reload loses the web client's SyncPlay state, and joining again
      * is how it gets it back. The server picks the group from the guest's share, so
      * nothing here says which group to join. It has to wait for the WebSocket,
-     * since that is how the server tells the client it joined.
+     * since that is how the server tells the client it joined. The server is the
+     * one to ask: it answers 425 until this session's socket is up. On Jellyfin 12
+     * window.ApiClient isn't the client that holds the socket, so it always says
+     * closed and a guest asking it never joined.
      */
     function maybeJoinWatchParty(context) {
         if (!context.watchParty || partyJoin.state !== 'idle') {
@@ -412,11 +415,6 @@
         partyJoin.attempts += 1;
         if (partyJoin.attempts > 120) {
             partyJoin.state = 'done';
-            return;
-        }
-
-        if (!isWebSocketOpen()) {
-            window.setTimeout(attemptPartyJoin, 1000);
             return;
         }
 
@@ -440,18 +438,6 @@
                 partyJoin.state = 'done';
             }
         });
-    }
-
-    function isWebSocketOpen() {
-        try {
-            if (window.ApiClient && typeof ApiClient.isWebSocketOpen === 'function') {
-                return ApiClient.isWebSocketOpen();
-            }
-        } catch (error) {
-            // Fall through: the server answers 425 until the socket is up.
-        }
-
-        return true;
     }
 
     function extractAllowedItemId(state) {
