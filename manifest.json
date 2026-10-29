@@ -9,6 +9,14 @@
         "imageUrl": "",
         "versions": [
             {
+                "version": "1.1.1.0",
+                "changelog": "Watch-party guests now join the group on their own on Jellyfin 12 too. Adds a bitrate limit for guests watching from outside your local network (#24): streams above it are transcoded down, and 0 keeps the server's own Internet streaming limit.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.1.1.0/sharelinks_1.1.1.0.zip",
+                "checksum": "f8664c865f9c97cee4eaef7d9c74e056",
+                "timestamp": "2026-10-29T07:45:00Z"
+            },
+            {
                 "version": "1.1.0.0",
                 "changelog": "Share music, photos, books, collections, playlists, folders and Live TV channels, not just movies and series. New \"Watch together\" option: the link opens a SyncPlay group with you and everyone who opens it joins, with only you controlling playback by default. The link ends when the group closes (#25). Also tightens what guests can reach on Jellyfin's own API: other SyncPlay groups, other viewers' sessions on a multi-use link, the user list, and Live TV channels they weren't sent.",
                 "targetAbi": "10.11.0.0",
