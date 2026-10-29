@@ -156,10 +156,11 @@
                                 <input is="emby-checkbox" type="checkbox" id="AllowTranscoding" />
                                 <span>Allow transcoding</span>
                             </label>
-                            <div class="sl-field inputContainer hide" id="GuestRemoteBitrateLimitField">
-                                <input is="emby-input" type="number" id="GuestRemoteBitrateLimitMbps" label="Bitrate limit for guests (Mbit/s)" min="0" max="2000" />
-                                <div class="fieldDescription">Caps the stream bitrate for guests connecting from outside your local network, the same way the remote bitrate limit on a regular user does. Streams above the cap are transcoded down. 0 means no limit.</div>
-                            </div>
+                        </div>
+
+                        <div class="sl-field inputContainer hide" id="GuestRemoteBitrateLimitField">
+                            <input is="emby-input" type="number" id="GuestRemoteBitrateLimitMbps" label="Bitrate limit for guests (Mbit/s)" min="0" max="2000" />
+                            <div class="fieldDescription">Caps the stream bitrate for guests connecting from outside your local network, like the remote bitrate limit on a regular user. Streams above it are transcoded down, once per guest. 0 uses the server's own Internet streaming limit, which is none unless you set one.</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -251,11 +252,11 @@
                     page.querySelector('#GuestHiddenSelectors').value = cfg.GuestHiddenSelectors != null ? cfg.GuestHiddenSelectors : '';
                     page.querySelector('#AllowTranscoding').checked = cfg.AllowTranscoding !== false;
                     page.querySelector('#AllowRemuxing').checked = cfg.AllowRemuxing !== false;
+                    page.querySelector('#GuestRemoteBitrateLimitMbps').value = cfg.GuestRemoteBitrateLimitMbps || 0;
                     page.querySelector('#CleanupIntervalMinutes').value = cfg.CleanupIntervalMinutes || 60;
                     page.querySelector('#OneUseDefault').checked = cfg.OneUseDefault !== false;
                     page.querySelector('#WatchPartyEnabled').checked = cfg.WatchPartyEnabled !== false;
                     page.querySelector('#MaxConcurrentViewers').value = cfg.MaxConcurrentViewers === undefined ? 10 : cfg.MaxConcurrentViewers;
-                    page.querySelector('#GuestRemoteBitrateLimitMbps').value = cfg.GuestRemoteBitrateLimitMbps || 0;
                     page.querySelector('#GuestModeLockdownEnabled').checked = cfg.GuestModeLockdownEnabled !== false;
                     page.querySelector('#GuestPluginApiGuardEnabled').checked = cfg.GuestPluginApiGuardEnabled !== false;
                     syncBitrateLimitField();
@@ -504,11 +505,11 @@
                     cfg.GuestHiddenSelectors = page.querySelector('#GuestHiddenSelectors').value;
                     cfg.AllowTranscoding = page.querySelector('#AllowTranscoding').checked;
                     cfg.AllowRemuxing = page.querySelector('#AllowRemuxing').checked;
+                    cfg.GuestRemoteBitrateLimitMbps = Math.min(Math.max(parseInt(page.querySelector('#GuestRemoteBitrateLimitMbps').value, 10) || 0, 0), 2000);
                     cfg.CleanupIntervalMinutes = parseInt(page.querySelector('#CleanupIntervalMinutes').value, 10) || 60;
                     cfg.OneUseDefault = page.querySelector('#OneUseDefault').checked;
                     cfg.WatchPartyEnabled = page.querySelector('#WatchPartyEnabled').checked;
                     cfg.MaxConcurrentViewers = Math.max(parseInt(page.querySelector('#MaxConcurrentViewers').value, 10) || 0, 0);
-                    cfg.GuestRemoteBitrateLimitMbps = Math.max(parseInt(page.querySelector('#GuestRemoteBitrateLimitMbps').value, 10) || 0, 0);
                     cfg.GuestModeLockdownEnabled = page.querySelector('#GuestModeLockdownEnabled').checked;
                     cfg.GuestPluginApiGuardEnabled = page.querySelector('#GuestPluginApiGuardEnabled').checked;
 

@@ -35,7 +35,8 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool AllowRemuxing { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets the bitrate ceiling, in Mbit/s
+    /// Gets or sets the bitrate limit for guests outside the local network, in Mbit/s.
+    /// 0 leaves Jellyfin's own Internet streaming limit in charge.
     /// </summary>
     public int GuestRemoteBitrateLimitMbps { get; set; } = 0;
 
