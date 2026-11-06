@@ -1,6 +1,6 @@
 # ShareLinks for Jellyfin
 
-Share a title, some music, photos, a book, a collection, a playlist, a folder or a Live TV
+Share a movie, tv show, specific episode, some music, photos, a book, a collection, a playlist, a folder or a Live TV
 channel with a link. The person you send it to does not need an account and can only access what
 you shared. You choose when the link expires. Or make it a watch party: everyone who opens the
 link joins a SyncPlay group with you.
