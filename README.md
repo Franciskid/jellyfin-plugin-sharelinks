@@ -12,7 +12,7 @@ Choose an expiry date and copy the link. Whoever opens it goes straight to the s
 already signed in with a temporary account. When the link expires,
 the account and the temporary tag are removed.
 
-<img width="1505" height="820" alt="Create guest link dialog, opened from the item menu" src="https://github.com/user-attachments/assets/27296f27-9a37-4870-90aa-df8b6d9e9f43" />
+<img width="1500" height="820" alt="Create guest link dialog on a movie page, with Watch together ticked" src="docs/images/create-dialog.jpg" />
 
 ---
 
@@ -43,9 +43,9 @@ does not cover them:
   they were sent, can't open a tuner with a hand-made stream token, and can't read timers,
   recordings or tuner details.
 
-The web client also hides the home, menu and search controls, disables cast and genre links,
-and brings guests back to the shared title if they navigate away. This keeps the interface simple;
-the server enforces the access restrictions even if someone disables the script.
+The web client also hides the home, menu and search controls, makes cast, crew and genre names
+unclickable, and brings guests back to the shared title if they navigate away. This keeps the
+interface simple; the server enforces the access restrictions even if someone disables the script.
 
 Jellyfin has no server setting that keeps a user on one page. The plugin uses Jellyfin accounts
 and tag permissions to control what guests can access, without a separate login system.
@@ -59,9 +59,9 @@ sequenceDiagram
   participant J as Jellyfin core
   participant G as Guest browser
   A->>P: ShareLink on an item, pick expiry
-  P->>P: 256-bit token, store HMAC hash only
+  P->>P: 256-bit token, store its HMAC hash
   P->>J: Tag the item and its children
-  P-->>A: URL (returned once, copied to clipboard)
+  P-->>A: URL, copied to clipboard
   G->>P: GET /ShareLinks/Redeem?t=...
   P->>P: Hash the token, look the record up
   P->>J: Create guest user, policy = allow that tag
@@ -85,8 +85,8 @@ sequenceDiagram
 
 | Decision | Reason |
 |---|---|
-| Only the token HMAC hash is stored | The raw token is returned once and is never saved to disk. Lookups hash the presented token and compare with `FixedTimeEquals`. |
-| The HMAC key is a per-server file, mode 0600 | The `sharelinks.json` file alone cannot be used to recover a token. The key is generated on first use. |
+| Links are looked up by an HMAC hash of the token | Redemption hashes the presented token and compares it with `FixedTimeEquals`. The full link is also kept on the record while it is live, so the dashboard can copy it again, and is erased when the link expires or is revoked. |
+| The HMAC key is a per-server file, mode 0600 | Once a link is gone, its record in `sharelinks.json` holds only the hash, and the hash can't be turned back into a token without the key. The key is generated on first use. |
 | Tags propagate down, never up | A bug fixed in 1.0.3: a shared season tagged its parent series, and Jellyfin's tag inheritance then exposed every other season of that series. |
 | Guest accounts use a dedicated authentication provider | Guests cannot sign in through the login page with a password. If the plugin is disabled, Jellyfin also refuses those sign-ins. |
 | The password is generated per redemption and thrown away | This prevents sign-in with a blank password. The browser receives only a session token. |
@@ -164,8 +164,9 @@ A multi-use link works for everyone you send it to until it expires. Anyone with
 
 ## Managing links
 
-The plugin dashboard page lists every share with its status, title, copyable link, guest name and
-expiry. You can revoke any link on the spot, which removes the guest account and tags, just like expiry. A cleanup
+The plugin dashboard page lists every share with its status, title, kind, guest name and expiry,
+and marks watch parties. While a link is live you can copy or open it again from there. You can
+revoke any link on the spot, which removes the guest account and tags, just like expiry. A cleanup
 button removes revoked, expired and failed records from the store.
 
 ## Install
@@ -183,7 +184,8 @@ to appear.
 
 | Setting | Effect | Default |
 |---|---|---|
-| Default expiry | The expiry the create popup offers first | 24 h |
+| Enable ShareLinks | Off stops new links being created and watch-party guests joining their group. Links already sent still open until they expire or you revoke them | on |
+| Default expiry | The expiry used when a create request names none. The popup always sends its own: its date field starts 7 days out | 24 h |
 | Maximum expiry | The longest allowed lifetime for a link | 720 h |
 | Public base URL override | Forces the host used to build links, instead of the request host | derived |
 | Guest username prefix | Prefix for the temporary accounts | `share-` |
@@ -230,12 +232,16 @@ it in `token-secret.key`.
 
 ## Known limits
 
-- **Cast and crew are missing on a shared page.** Jellyfin core bug
-  [jellyfin/jellyfin#14926](https://github.com/jellyfin/jellyfin/issues/14926): a tag-restricted user
-  loses the Cast & Crew section, because the tag filter is applied to people as well as to media. A
-  ShareLinks guest is tag-restricted, so guests are affected too.
+- **On Jellyfin 10.11, cast and crew are missing on a shared page.** A Jellyfin core bug,
+  [jellyfin/jellyfin#14926](https://github.com/jellyfin/jellyfin/issues/14926), hid the Cast & Crew
+  section from any tag-restricted user, guests included. It was fixed in Jellyfin 12.0
+  ([#17377](https://github.com/jellyfin/jellyfin/pull/17377)) and not backported to 10.11. On 12,
+  guests see the cast; the names just aren't clickable.
 - **The token travels in the query string.** It appears in reverse-proxy access logs and in browser
   history.
+- **Live links are readable in `sharelinks.json`.** The full URL stays on the record until the link
+  expires or is revoked, so the dashboard can copy it again. Anyone who can read Jellyfin's data
+  folder can open a live link.
 - **Redemption is public and has no rate limit.** Tokens are 256-bit random, so guessing one is not
   realistic, but the endpoint answers anyone.
 - **Episodes added after a share** receive the tag on the next redemption, not the moment they are
@@ -264,17 +270,30 @@ and in French.
 
 ## Workflow
 
-**1. Open the context menu on an item**
+**1. Open the context menu on an item and choose ShareLink**
 
-<img width="566" height="240" alt="ShareLink in the item menu" src="https://github.com/user-attachments/assets/25cfaa99-eed2-4bc6-a14b-bc00bc629d5e" />
+<img width="206" height="132" alt="ShareLink at the bottom of the item menu" src="docs/images/item-menu.png" />
 
-**2. Choose an expiry and the single-use option**
+**2. Choose who can use it, then pick an expiry**
 
-<img width="566" height="521" alt="Expiry picker" src="https://github.com/user-attachments/assets/754f3daa-80ee-4209-9d09-467940140f81" />
+Tick **Let several people use this link** for a multi-use link, and **Watch together** for a watch
+party. A preset button creates the link straight away; the date field plus **Create** sets an exact
+expiry.
+
+<img width="520" height="716" alt="Create guest link popup with multi-use and Watch together ticked" src="docs/images/expiry-picker.png" />
 
 **3. Copy the link**
 
-<img width="566" height="313" alt="Generated link" src="https://github.com/user-attachments/assets/d9e581eb-d654-4c73-8730-0b2b19fbbe25" />
+It is already on your clipboard. For a watch party you are in the SyncPlay group from this point.
+
+<img width="520" height="372" alt="Watch party link copied, with the share URL" src="docs/images/generated-link.png" />
+
+**4. The guest lands on the title**
+
+Whoever opens the link is signed in and taken to the shared title, with home, menu and search
+hidden. A watch-party guest is already in your group.
+
+<img width="1500" height="820" alt="The shared movie as a guest sees it, with only the SyncPlay and Cast to Device buttons left in the header" src="docs/images/guest-view.jpg" />
 
 ## Tests
 
