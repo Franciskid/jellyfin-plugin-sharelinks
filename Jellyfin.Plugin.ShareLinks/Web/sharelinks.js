@@ -8,6 +8,9 @@
     var hiddenAttr = 'data-sharelinks-hidden';
     var injectedAttr = 'data-sharelinks-injected';
     var configPromise = null;
+    var configPromiseUserId = null;
+    var toastHost = null;
+    var toastHostObserver = null;
     var userPromise = null;
     var userPromiseUserId = null;
     var guestStatePromise = null;
@@ -259,8 +262,17 @@
         });
     }
 
-    function getConfig() {
-        if (!configPromise) {
+    /**
+     * Cached per signed-in user, like getCurrentUser(). The script loads on the
+     * login page, where this request is refused; cached for the page's lifetime,
+     * that empty answer outlived the sign-in, and the create popup ignored the
+     * admin's settings until a reload. Pass fresh to skip the cache, so settings
+     * saved since the page loaded apply too.
+     */
+    function getConfig(fresh) {
+        var userId = currentApiUserId();
+        if (fresh || !configPromise || configPromiseUserId !== userId) {
+            configPromiseUserId = userId;
             configPromise = ApiClient.getPluginConfiguration(pluginId).catch(function () {
                 return {};
             });
@@ -1160,7 +1172,7 @@
         }
 
         try {
-            var config = await getConfig();
+            var config = await getConfig(true);
             var user = await getCurrentUser();
             if (!isAdministrator(user)) {
                 notify(t('adminOnly'));
@@ -1307,21 +1319,96 @@
         return Promise.resolve(fallbackCopy(text));
     }
 
+    /**
+     * Shows a message as one of jellyfin-web's own toasts, in its own container, so
+     * ours stack with Jellyfin's instead of being drawn on top of them. A guest
+     * joining a party gets "SyncPlay enabled" from Jellyfin and "You joined the
+     * watch party" from us at the same moment, and two containers in the same
+     * corner made the two unreadable.
+     */
     function notify(message) {
-        ensureShareLinksUi();
         var toast = document.createElement('div');
-        toast.className = 'sharelinks-toast';
+        toast.className = 'toast';
         toast.textContent = message;
-        document.body.appendChild(toast);
+        getToastContainer().appendChild(toast);
         window.setTimeout(function () {
-            toast.classList.add('is-visible');
-        }, 20);
+            toast.classList.add('toastVisible');
+        }, 30);
         window.setTimeout(function () {
-            toast.classList.remove('is-visible');
+            toast.classList.add('toastHide');
             window.setTimeout(function () {
-                toast.remove();
-            }, 180);
+                var parent = toast.parentNode;
+                if (parent) {
+                    parent.removeChild(toast);
+                }
+                if (parent && parent === toastHost && !parent.firstChild) {
+                    dropToastHost();
+                }
+            }, 300);
         }, 3600);
+    }
+
+    function findJellyfinToastContainer() {
+        var nodes = document.querySelectorAll('.toastContainer');
+        for (var i = 0; i < nodes.length; i++) {
+            if (nodes[i] !== toastHost) {
+                return nodes[i];
+            }
+        }
+        return null;
+    }
+
+    function getToastContainer() {
+        var native = findJellyfinToastContainer();
+        if (native) {
+            return native;
+        }
+
+        if (!toastHost || !toastHost.isConnected) {
+            toastHost = document.createElement('div');
+            toastHost.className = 'toastContainer';
+            document.body.appendChild(toastHost);
+            watchForJellyfinToastContainer();
+        }
+        return toastHost;
+    }
+
+    /**
+     * jellyfin-web creates its container the first time it shows a toast and keeps
+     * using that one. If ours came first, Jellyfin's toasts would land in a second
+     * container right on top of it, so ours moves into Jellyfin's as soon as it
+     * appears.
+     */
+    function watchForJellyfinToastContainer() {
+        if (toastHostObserver || typeof MutationObserver === 'undefined') {
+            return;
+        }
+
+        toastHostObserver = new MutationObserver(function () {
+            var native = findJellyfinToastContainer();
+            if (!native || !toastHost) {
+                return;
+            }
+
+            // Ours are older, so they go first, in the order they were shown.
+            var anchor = native.firstChild;
+            while (toastHost.firstChild) {
+                native.insertBefore(toastHost.firstChild, anchor);
+            }
+            dropToastHost();
+        });
+        toastHostObserver.observe(document.body, { childList: true });
+    }
+
+    function dropToastHost() {
+        if (toastHostObserver) {
+            toastHostObserver.disconnect();
+            toastHostObserver = null;
+        }
+        if (toastHost && toastHost.parentNode) {
+            toastHost.parentNode.removeChild(toastHost);
+        }
+        toastHost = null;
     }
 
     function showShareResult(shareUrl, copied, multiUse, watchParty) {
@@ -1698,8 +1785,6 @@
             '.sharelinks-toggle-text{display:flex;flex-direction:column;gap:4px;}',
             '.sharelinks-toggle-label{line-height:1.35;}',
             '.sharelinks-toggle-hint{color:var(--text-secondary-color,#cfcfcf);font-size:.88rem;line-height:1.4;}',
-            '.sharelinks-toast{position:fixed;left:24px;bottom:24px;z-index:1000000;max-width:min(460px,calc(100vw - 48px));background:rgba(24,24,24,.96);color:#fff;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:11px 14px;box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease;}',
-            '.sharelinks-toast.is-visible{opacity:1;transform:translateY(0);}',
             '@media (max-width:520px){.sharelinks-duration-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.sharelinks-dialog{padding:18px;}.sharelinks-actions{justify-content:stretch;}.sharelinks-action{flex:1;}}'
         ].join('');
         document.head.appendChild(style);

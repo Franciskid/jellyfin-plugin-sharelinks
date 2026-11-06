@@ -2,17 +2,16 @@
 <html>
 <head>
     <title>ShareLinks</title>
+</head>
+<body>
+<div id="ShareLinksConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <!-- Jellyfin keeps only this element when it loads the page, so the styles live in here, not in <head>. -->
     <style>
         #ShareLinksConfigPage .sl-section {
             margin-bottom: 1.25rem;
             padding-bottom: 1rem;
             border-bottom: 1px solid rgba(127, 127, 127, 0.18);
-        }
-
-        #ShareLinksConfigPage .sl-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.75rem 1rem;
         }
 
         #ShareLinksConfigPage .sl-field .fieldDescription {
@@ -30,29 +29,79 @@
             flex-wrap: wrap;
         }
 
+        /* Column widths follow the content, so the title gets whatever the other
+           columns leave over instead of being squeezed to a word per line. */
         #ShareLinksConfigPage .sl-table {
             width: 100%;
+            min-width: 44rem;
             border-collapse: collapse;
-            table-layout: fixed;
         }
 
         #ShareLinksConfigPage .sl-table th,
         #ShareLinksConfigPage .sl-table td {
-            padding: 0.45rem 0.4rem;
+            padding: 0.6rem 0.5rem;
             border-bottom: 1px solid rgba(127, 127, 127, 0.14);
-            vertical-align: top;
+            vertical-align: middle;
             text-align: left;
-            word-break: break-word;
         }
 
         #ShareLinksConfigPage .sl-table th {
             font-size: 0.88rem;
             font-weight: 600;
+            white-space: nowrap;
+        }
+
+        #ShareLinksConfigPage .sl-table .sl-item {
+            min-width: 11rem;
+        }
+
+        #ShareLinksConfigPage .sl-table .sl-guest {
+            max-width: 12rem;
+            overflow-wrap: anywhere;
+            font-size: 0.9em;
+        }
+
+        #ShareLinksConfigPage .sl-table .sl-nowrap {
+            white-space: nowrap;
         }
 
         #ShareLinksConfigPage .sl-table .sl-right {
             text-align: right;
+        }
+
+        #ShareLinksConfigPage .sl-row-actions {
+            display: inline-flex;
+            flex-wrap: nowrap;
+            justify-content: flex-end;
+            gap: 0.35rem;
+        }
+
+        #ShareLinksConfigPage .sl-row-actions .emby-button {
+            margin: 0;
+            padding: 0.35em 0.8em;
+            font-size: 0.9em;
+            text-decoration: none;
             white-space: nowrap;
+        }
+
+        #ShareLinksConfigPage .sl-status {
+            display: inline-block;
+            padding: 0.15em 0.6em;
+            border-radius: 1em;
+            font-size: 0.85em;
+            font-weight: 600;
+            white-space: nowrap;
+            background: rgba(127, 127, 127, 0.18);
+        }
+
+        #ShareLinksConfigPage .sl-status-live {
+            background: rgba(82, 181, 75, 0.2);
+            color: #6fcf68;
+        }
+
+        #ShareLinksConfigPage .sl-status-failed {
+            background: rgba(229, 72, 77, 0.2);
+            color: #f0767a;
         }
 
         #ShareLinksConfigPage .sl-inline {
@@ -65,17 +114,7 @@
         #ShareLinksConfigPage .sl-list-status {
             min-height: 1.25rem;
         }
-
-        @media (max-width: 900px) {
-            #ShareLinksConfigPage .sl-grid {
-                grid-template-columns: 1fr;
-            }
-        }
     </style>
-</head>
-<body>
-<div id="ShareLinksConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
-     data-require="emby-input,emby-button,emby-select,emby-checkbox">
     <div data-role="content">
         <div class="content-primary">
             <form id="ShareLinksConfigForm">
@@ -121,7 +160,7 @@
 
                         <div class="sl-field inputContainer">
                             <input is="emby-input" type="number" id="DefaultExpiryHours" label="Default expiry (hours)" min="1" max="8760" />
-                            <div class="fieldDescription">Used by the menu action when the admin accepts the default.</div>
+                            <div class="fieldDescription">Applies to links created through the API without an expiry. The create popup always picks its own date, starting 7 days out.</div>
                         </div>
 
                         <div class="sl-field inputContainer">
@@ -137,7 +176,7 @@
                             <input is="emby-input" type="text" id="GuestUsernamePrefix" label="Guest username prefix" />
                         </div>
 
-                        <div class="sl-field inputContainer" style="grid-column: 1 / -1;">
+                        <div class="sl-field inputContainer">
                             <input is="emby-input" type="text" id="GuestHiddenSelectors" label="Cosmetic: hide elements from guests (CSS, comma-separated)" />
                             <div class="fieldDescription">Tidies the guest's view only. This runs in the browser and blocks nothing, so do not rely on it to keep a guest out of anything. Use the plugin access section below for that.</div>
                         </div>
@@ -210,17 +249,16 @@
                         <table class="sl-table">
                             <thead>
                                 <tr>
-                                    <th style="width: 9rem;">Status</th>
                                     <th>Item</th>
-                                    <th style="width: 14rem;">Link</th>
-                                    <th style="width: 11rem;">Guest</th>
-                                    <th style="width: 11rem;">Expires</th>
-                                    <th style="width: 9rem;" class="sl-right">Actions</th>
+                                    <th>Status</th>
+                                    <th>Guest</th>
+                                    <th>Expires</th>
+                                    <th class="sl-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="LinksBody">
                                 <tr>
-                                    <td colspan="6" class="sl-muted">No links loaded yet.</td>
+                                    <td colspan="5" class="sl-muted">No links loaded yet.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -319,7 +357,12 @@
 
             function fmtDate(value) {
                 if (!value) { return 'n/a'; }
-                return new Date(value).toLocaleString();
+                var date = new Date(value);
+                try {
+                    return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+                } catch (e) {
+                    return date.toLocaleString();
+                }
             }
 
             function escapeHtml(value) {
@@ -350,7 +393,7 @@
                 }) : [];
 
                 if (!items.length) {
-                    body.innerHTML = '<tr><td colspan="6" class="sl-muted">No active links.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="5" class="sl-muted">No active links.</td></tr>';
                     page.querySelector('#LinksStatus').textContent = 'No share links.';
                     return;
                 }
@@ -361,27 +404,32 @@
                     var guestName = escapeHtml(record.GuestUserName || 'n/a');
                     var expires = fmtDate(record.ExpiresAtUtc || record.ExpiresAt);
                     var shareUrl = record.ShareUrl ? escapeHtml(record.ShareUrl) : '';
-                    var linkCell = shareUrl
-                        ? '<button is="emby-button" type="button" class="raised" data-copy="' + shareUrl + '"><span>Copy</span></button> ' +
-                          '<a href="' + shareUrl + '" target="_blank" rel="noopener">Open</a>'
-                        : '<span class="sl-muted">n/a</span>';
+                    var finished = status === 'Expired' || status === 'Revoked';
+                    var statusClass = status === 'Failed'
+                        ? 'sl-status sl-status-failed'
+                        : (finished ? 'sl-status' : 'sl-status sl-status-live');
+                    // The URL is only kept while the link is live, so finished rows have
+                    // nothing to copy; and revoking them again would do nothing.
+                    var actions = [];
+                    if (shareUrl) {
+                        actions.push('<button is="emby-button" type="button" class="raised emby-button" data-copy="' + shareUrl + '"><span>Copy link</span></button>');
+                        actions.push('<a class="raised emby-button" href="' + shareUrl + '" target="_blank" rel="noopener">Open</a>');
+                    }
+                    if (!finished) {
+                        actions.push('<button is="emby-button" type="button" class="raised emby-button" data-id="' + escapeHtml(record.Id) + '"><span>Revoke</span></button>');
+                    }
                     return [
                         '<tr>',
-                        '<td>', escapeHtml(status), '</td>',
-                        '<td>',
+                        '<td class="sl-item">',
                         '<div><strong>', itemName, '</strong></div>',
                         '<div class="sl-muted">', escapeHtml(kindLabel(record.Kind)),
                         record.WatchParty ? escapeHtml(' · Watch party' + (record.WatchPartyHostOnly ? ', host controls' : '')) : '',
                         '</div>',
                         '</td>',
-                        '<td>', linkCell, '</td>',
-                        '<td>', guestName, '</td>',
-                        '<td>', escapeHtml(expires), '</td>',
-                        '<td class="sl-right">',
-                        '<button is="emby-button" type="button" class="raised" data-id="', escapeHtml(record.Id), '">',
-                        '<span>Revoke</span>',
-                        '</button>',
-                        '</td>',
+                        '<td><span class="', statusClass, '">', escapeHtml(status), '</span></td>',
+                        '<td class="sl-guest">', guestName, '</td>',
+                        '<td class="sl-nowrap">', escapeHtml(expires), '</td>',
+                        '<td class="sl-right"><div class="sl-row-actions">', actions.join(''), '</div></td>',
                         '</tr>'
                     ].join('');
                 }).join('');
@@ -412,7 +460,7 @@
                     renderLinks(list || []);
                 }).catch(function (error) {
                     status.textContent = 'Could not load share links.';
-                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="6" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
+                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="5" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
                 });
             }
 
@@ -429,7 +477,7 @@
                     }
                     span.textContent = 'Copied';
                     window.setTimeout(function () {
-                        span.textContent = 'Copy';
+                        span.textContent = 'Copy link';
                     }, 2000);
                 });
             }
