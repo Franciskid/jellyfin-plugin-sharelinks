@@ -3,7 +3,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.ShareLinks.Models;
+using Jellyfin.Plugin.ShareLinks.Security;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Entities;
@@ -39,6 +41,7 @@ public sealed class ShareLinkRedemptionService
     private readonly ShareLinkCleanupService _cleanupService;
     private readonly WatchPartyService _watchPartyService;
     private readonly ISessionManager _sessionManager;
+    private readonly IUserManager _userManager;
     private readonly ILogger<ShareLinkRedemptionService> _logger;
     private readonly SemaphoreSlim _redeemGate = new(1, 1);
 
@@ -52,6 +55,7 @@ public sealed class ShareLinkRedemptionService
         ShareLinkCleanupService cleanupService,
         WatchPartyService watchPartyService,
         ISessionManager sessionManager,
+        IUserManager userManager,
         ILogger<ShareLinkRedemptionService> logger)
     {
         _libraryManager = libraryManager;
@@ -62,6 +66,7 @@ public sealed class ShareLinkRedemptionService
         _cleanupService = cleanupService;
         _watchPartyService = watchPartyService;
         _sessionManager = sessionManager;
+        _userManager = userManager;
         _logger = logger;
     }
 
@@ -109,6 +114,17 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
+        // A regular user's share lives only while that user may still share. Checked
+        // before anything is written, and again further down against the item.
+        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        var standing = ShareCreatorPolicy.Evaluate(config, record, _userManager, out var creator);
+        if (standing == CreatorStanding.Revoked)
+        {
+            _logger.LogInformation("ShareLinks: record {RecordId} ended, its creator may no longer share.", record.Id);
+            await HandleTerminalRecordAsync(record, ShareLinkStatus.Revoked, "The creator may no longer share.", cancellationToken).ConfigureAwait(false);
+            return new ShareLinkRedemptionResult();
+        }
+
         // A party whose group has closed is over, even if the monitor has not
         // noticed yet. The group id is on the record before the URL is handed out.
         if (record.WatchParty
@@ -151,9 +167,26 @@ public sealed class ShareLinkRedemptionService
             return new ShareLinkRedemptionResult();
         }
 
+        // Null for an administrator's share. For a regular user's, the share is held
+        // to what they can open today, not what they could when they made the link.
+        Func<BaseItem, bool>? canInclude = null;
+        if (creator is not null)
+        {
+            var kind = ShareableItemPolicy.Classify(item);
+            canInclude = candidate => ShareCreatorPolicy.CanOpen(creator, candidate);
+            if (!kind.HasValue
+                || !ShareCreatorPolicy.CanShareItem(creator, item, kind.Value)
+                || !_itemTagService.CanCover(item, canInclude))
+            {
+                _logger.LogInformation("ShareLinks: record {RecordId} ended, its creator can no longer open what it shares.", record.Id);
+                await HandleTerminalRecordAsync(record, ShareLinkStatus.Revoked, "The creator can no longer open the shared item.", cancellationToken).ConfigureAwait(false);
+                return new ShareLinkRedemptionResult();
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(record.AllowedTag))
         {
-            await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
+            await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, canInclude, cancellationToken).ConfigureAwait(false);
             record.MetadataTouched = true;
         }
 
@@ -185,7 +218,7 @@ public sealed class ShareLinkRedemptionService
         AuthenticationResult authResult;
         try
         {
-            var user = await _guestUserService.EnsureGuestUserAsync(record, password, cancellationToken).ConfigureAwait(false);
+            var user = await _guestUserService.EnsureGuestUserAsync(record, password, creator, cancellationToken).ConfigureAwait(false);
             record.GuestUserId = user.Id;
             record.GuestUserName = user.Username;
 

@@ -196,6 +196,9 @@ to appear.
 | Single use by default | How the create popup starts | on |
 | Guest lockdown | Hides navigation controls in the guest interface | on |
 | Allow watch parties | Offers "Watch together" in the create popup | on |
+| Let every user create share links | Lets non-administrators share. Off means only administrators and the users ticked below it | off |
+| Users allowed to create share links | The non-administrators who may share while the box above is off | none |
+| Active links per user | How many live links a non-administrator may have. 0 means no limit | 20 |
 | Block other plugins for guests | Blocks guest access to other plugins on the server | on |
 | Plugin access list | Plugins guests are allowed to access | empty |
 | Cosmetic hidden selectors | Hides matching elements in the browser; does not restrict access | empty |
@@ -213,13 +216,30 @@ plugin or endpoint it came from.
 This only changes what guests see in the browser. To restrict access, use the plugin access
 settings above.
 
+### Sharing by non-administrators
+
+Off by default. When a regular user is allowed to share:
+
+- They can only share what they can open themselves (library access, parental rating, blocked
+  tags, private playlists). A collection or playlist drops the members they cannot see. A folder
+  or series with something hidden inside it is refused, because the hidden item would inherit
+  the share tag.
+- The guest gets no playback right the creator lacks: transcoding, remuxing, remote access,
+  bitrate limit, Live TV and SyncPlay are all capped to the creator's own policy.
+- The link ends when the creator is deleted, disabled or loses the right to share; guests
+  already signed in are signed out within about 15 seconds. Access to the item is checked again
+  each time the link is opened, and the link ends if the creator can no longer open it.
+- Guest accounts can never create links, whatever the settings say.
+- They can list and revoke their own links through the API. The dashboard list stays admin-only.
+
 ## HTTP API
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `POST /ShareLinks/Admin/Create` | Admin | Create a link. Returns the raw URL once. `watchParty` and `hostOnlyControl` make it a party |
-| `GET /ShareLinks/Admin/List` | Admin | All records with status and expiry |
-| `POST /ShareLinks/Admin/Revoke/{id}` | Admin | Revoke a link and remove its guest account and tags |
+| `POST /ShareLinks/Admin/Create` | Admin or allowed user | Create a link. Returns the raw URL once. `watchParty` and `hostOnlyControl` make it a party |
+| `GET /ShareLinks/Admin/List` | Admin or allowed user | All records with status and expiry. An allowed user gets their own only |
+| `POST /ShareLinks/Admin/Revoke/{id}` | Admin or allowed user | Revoke a link and remove its guest account and tags. An allowed user can revoke their own only |
+| `GET /ShareLinks/CreateOptions` | Session | Whether the caller may share, and the defaults for the create popup |
 | `POST /ShareLinks/Admin/Cleanup` | Admin | Remove revoked, expired and failed records |
 | `GET /ShareLinks/Admin/Plugins` | Admin | Installed plugins and their guest access state |
 | `GET /ShareLinks/GuestState` | Session | Whether the caller is a guest, and what to lock down |

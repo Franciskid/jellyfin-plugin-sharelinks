@@ -188,6 +188,28 @@
                 </div>
 
                 <div class="sl-section">
+                    <h3 class="sectionTitle">Who can share</h3>
+                    <div class="sl-muted">Administrators can always create links. Other users can only share what they can open themselves: a link never gives a guest more than its creator has, it ends if the creator is deleted, disabled or loses this right, and guest accounts can never share.</div>
+                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:0.75rem;">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="AllowAllUsersToShare" />
+                            <span>Let every user create share links</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">Off by default. Leave it off and tick users below to allow only some.</div>
+                    </div>
+                    <div id="SharingUsersField">
+                        <div class="sl-muted" style="margin-top:0.5rem;">Users allowed to create share links:</div>
+                        <div id="SharingUsers" style="margin-top:0.5rem;">
+                            <div class="sl-muted">Loading users…</div>
+                        </div>
+                    </div>
+                    <div class="sl-field inputContainer" style="margin-top:0.75rem;">
+                        <input is="emby-input" type="number" id="MaxLinksPerUser" label="Active links per user" min="0" max="1000" />
+                        <div class="fieldDescription">How many links a non-administrator may have active at once. 0 means no limit. Administrators are not limited.</div>
+                    </div>
+                </div>
+
+                <div class="sl-section">
                     <h3 class="sectionTitle">Playback policy</h3>
                     <div class="sl-grid">
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -251,6 +273,7 @@
                                 <tr>
                                     <th>Item</th>
                                     <th>Status</th>
+                                    <th>Shared by</th>
                                     <th>Guest</th>
                                     <th>Expires</th>
                                     <th class="sl-right">Actions</th>
@@ -258,7 +281,7 @@
                             </thead>
                             <tbody id="LinksBody">
                                 <tr>
-                                    <td colspan="5" class="sl-muted">No links loaded yet.</td>
+                                    <td colspan="6" class="sl-muted">No links loaded yet.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -297,7 +320,11 @@
                     page.querySelector('#MaxConcurrentViewers').value = cfg.MaxConcurrentViewers === undefined ? 10 : cfg.MaxConcurrentViewers;
                     page.querySelector('#GuestModeLockdownEnabled').checked = cfg.GuestModeLockdownEnabled !== false;
                     page.querySelector('#GuestPluginApiGuardEnabled').checked = cfg.GuestPluginApiGuardEnabled !== false;
+                    page.querySelector('#AllowAllUsersToShare').checked = cfg.AllowAllUsersToShare === true;
+                    page.querySelector('#MaxLinksPerUser').value = cfg.MaxLinksPerUser === undefined ? 20 : cfg.MaxLinksPerUser;
+                    sharingUserIds = Array.isArray(cfg.SharingUserIds) ? cfg.SharingUserIds.map(normalizeId) : [];
                     syncBitrateLimitField();
+                    syncSharingUsersField();
                 }).finally(function () {
                     Dashboard.hideLoadingMsg();
                 });
@@ -308,6 +335,72 @@
             // brings it back as it was.
             function syncBitrateLimitField() {
                 page.querySelector('#GuestRemoteBitrateLimitField').classList.toggle('hide', !page.querySelector('#AllowTranscoding').checked);
+            }
+
+            var sharingUserIds = [];
+            var userNames = {};
+
+            function normalizeId(value) {
+                return String(value || '').replace(/-/g, '').toLowerCase();
+            }
+
+            // The per-user list means nothing while everyone may share.
+            function syncSharingUsersField() {
+                page.querySelector('#SharingUsersField').classList.toggle('hide', page.querySelector('#AllowAllUsersToShare').checked);
+            }
+
+            // Administrators are left out, they can always share. So are the plugin's
+            // own guest accounts, which the server refuses whatever is saved here.
+            function loadUsers() {
+                var host = page.querySelector('#SharingUsers');
+                var prefix = page.querySelector('#GuestUsernamePrefix').value || 'share-';
+                return ApiClient.getUsers().then(function (list) {
+                    var users = Array.isArray(list) ? list : [];
+                    userNames = {};
+                    users.forEach(function (user) {
+                        userNames[normalizeId(user.Id)] = user.Name || '';
+                    });
+
+                    var candidates = users.filter(function (user) {
+                        var policy = user.Policy || {};
+                        return policy.IsAdministrator !== true
+                            && String(policy.AuthenticationProviderId || '').indexOf('GuestAuthenticationProvider') < 0
+                            && String(user.Name || '').indexOf(prefix) !== 0;
+                    });
+
+                    if (!candidates.length) {
+                        host.innerHTML = '<div class="sl-muted">No non-administrator users.</div>';
+                        return;
+                    }
+
+                    host.innerHTML = candidates.map(function (user) {
+                        var id = normalizeId(user.Id);
+                        return '<div class="checkboxContainer">'
+                            + '<label>'
+                            + '<input is="emby-checkbox" type="checkbox" class="sl-user-allow" data-user-id="'
+                            + escapeHtml(id) + '"' + (sharingUserIds.indexOf(id) >= 0 ? ' checked' : '') + ' />'
+                            + '<span>' + escapeHtml(user.Name) + '</span>'
+                            + '</label>'
+                            + '</div>';
+                    }).join('');
+                }).catch(function () {
+                    host.innerHTML = '<div class="sl-muted">Could not load the user list.</div>';
+                });
+            }
+
+            function collectSharingUserIds() {
+                // As with the plugin list: a failed load leaves nothing to read, so the
+                // saved list is kept rather than silently cleared.
+                var boxes = page.querySelectorAll('.sl-user-allow');
+                if (!boxes.length) {
+                    return null;
+                }
+
+                return Array.prototype.filter.call(boxes, function (box) {
+                    return box.checked;
+                }).map(function (box) {
+                    return box.getAttribute('data-user-id');
+                });
             }
 
             // The ticked state comes from the server rather than from the config we
@@ -393,7 +486,7 @@
                 }) : [];
 
                 if (!items.length) {
-                    body.innerHTML = '<tr><td colspan="5" class="sl-muted">No active links.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="6" class="sl-muted">No active links.</td></tr>';
                     page.querySelector('#LinksStatus').textContent = 'No share links.';
                     return;
                 }
@@ -402,6 +495,7 @@
                     var status = record.Status || 'Unknown';
                     var itemName = escapeHtml(record.ItemNameSnapshot || record.ItemId || '');
                     var guestName = escapeHtml(record.GuestUserName || 'n/a');
+                    var creatorName = escapeHtml(userNames[normalizeId(record.CreatedByUserId)] || (record.CreatedByUserId ? 'Deleted user' : 'n/a'));
                     var expires = fmtDate(record.ExpiresAtUtc || record.ExpiresAt);
                     var shareUrl = record.ShareUrl ? escapeHtml(record.ShareUrl) : '';
                     var finished = status === 'Expired' || status === 'Revoked';
@@ -427,6 +521,7 @@
                         '</div>',
                         '</td>',
                         '<td><span class="', statusClass, '">', escapeHtml(status), '</span></td>',
+                        '<td class="sl-nowrap">', creatorName, '</td>',
                         '<td class="sl-guest">', guestName, '</td>',
                         '<td class="sl-nowrap">', escapeHtml(expires), '</td>',
                         '<td class="sl-right"><div class="sl-row-actions">', actions.join(''), '</div></td>',
@@ -460,7 +555,7 @@
                     renderLinks(list || []);
                 }).catch(function (error) {
                     status.textContent = 'Could not load share links.';
-                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="5" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
+                    page.querySelector('#LinksBody').innerHTML = '<tr><td colspan="6" class="sl-muted">' + escapeHtml(error && error.message ? error.message : 'Load failed.') + '</td></tr>';
                 });
             }
 
@@ -561,6 +656,14 @@
                     cfg.GuestModeLockdownEnabled = page.querySelector('#GuestModeLockdownEnabled').checked;
                     cfg.GuestPluginApiGuardEnabled = page.querySelector('#GuestPluginApiGuardEnabled').checked;
 
+                    cfg.AllowAllUsersToShare = page.querySelector('#AllowAllUsersToShare').checked;
+                    cfg.MaxLinksPerUser = Math.max(parseInt(page.querySelector('#MaxLinksPerUser').value, 10) || 0, 0);
+                    var allowedUserIds = collectSharingUserIds();
+                    if (allowedUserIds !== null) {
+                        cfg.SharingUserIds = allowedUserIds;
+                        sharingUserIds = allowedUserIds;
+                    }
+
                     var allowedPluginIds = collectAllowedPluginIds();
                     if (allowedPluginIds !== null) {
                         cfg.GuestAllowedPluginIds = allowedPluginIds;
@@ -578,7 +681,11 @@
 
             document.querySelector('#ShareLinksConfigPage').addEventListener('pageshow', function () {
                 page = this;
-                loadConfig().then(loadPlugins).then(loadLinks);
+                loadConfig().then(loadUsers).then(loadPlugins).then(loadLinks);
+            });
+
+            document.querySelector('#AllowAllUsersToShare').addEventListener('change', function () {
+                syncSharingUsersField();
             });
 
             document.querySelector('#AllowTranscoding').addEventListener('change', function () {

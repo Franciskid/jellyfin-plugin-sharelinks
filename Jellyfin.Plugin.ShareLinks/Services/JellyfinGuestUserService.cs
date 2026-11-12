@@ -4,6 +4,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data;
 using Jellyfin.Data.Enums;
 using Jellyfin.Data.Queries;
 using Jellyfin.Database.Implementations.Entities;
@@ -85,7 +86,17 @@ public sealed class JellyfinGuestUserService
     }
 
     /// <summary>Ensures the temporary guest user exists and has the correct policy and password.</summary>
-    public async Task<User> EnsureGuestUserAsync(ShareLinkRecord record, string password, CancellationToken cancellationToken)
+    public Task<User> EnsureGuestUserAsync(ShareLinkRecord record, string password, CancellationToken cancellationToken)
+    {
+        return EnsureGuestUserAsync(record, password, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// As <see cref="EnsureGuestUserAsync(ShareLinkRecord, string, CancellationToken)"/>,
+    /// for a share made by a regular user: the guest gets no playback right that
+    /// <paramref name="restrictedCreator"/> does not have.
+    /// </summary>
+    public async Task<User> EnsureGuestUserAsync(ShareLinkRecord record, string password, User? restrictedCreator, CancellationToken cancellationToken)
     {
         if (record is null)
         {
@@ -123,7 +134,7 @@ public sealed class JellyfinGuestUserService
         // interactive sign-in - but it means the account is never reachable with a blank
         // password either.
         await _userManager.ChangePasswordAsync(user, password).ConfigureAwait(false);
-        await ApplyPolicyAsync(user, record, disabled: false).ConfigureAwait(false);
+        await ApplyPolicyAsync(user, record, disabled: false, restrictedCreator).ConfigureAwait(false);
 
         user = _userManager.GetUserById(user.Id) ?? user;
         _logger.LogInformation("ShareLinks: ensured guest user {UserName} for record {RecordId}.", user.Username, record.Id);
@@ -332,9 +343,9 @@ public sealed class JellyfinGuestUserService
             : _userManager.GetUserByName(record.GuestUserName);
     }
 
-    private async Task ApplyPolicyAsync(User user, ShareLinkRecord record, bool disabled)
+    private async Task ApplyPolicyAsync(User user, ShareLinkRecord record, bool disabled, User? restrictedCreator = null)
     {
-        var policy = BuildPolicy(record, disabled, user.PasswordResetProviderId);
+        var policy = BuildPolicy(record, disabled, user.PasswordResetProviderId, restrictedCreator);
         await _userManager.UpdatePolicyAsync(user.Id, policy).ConfigureAwait(false);
     }
 
@@ -343,11 +354,50 @@ public sealed class JellyfinGuestUserService
     /// what a share needs depends on its kind: Live TV access only for a channel
     /// share, downloads only for a book, which the reader opens as a file.
     /// </summary>
-    public static UserPolicy BuildPolicy(ShareLinkRecord record, bool disabled, string? passwordResetProviderId)
+    /// <remarks>
+    /// When a regular user made the share, pass them as <paramref name="restrictedCreator"/>:
+    /// the guest then gets nothing the creator's own policy withholds, so a user
+    /// barred from transcoding or remote access cannot hand it to themselves with a link.
+    /// </remarks>
+    public static UserPolicy BuildPolicy(ShareLinkRecord record, bool disabled, string? passwordResetProviderId, User? restrictedCreator = null)
     {
         ArgumentNullException.ThrowIfNull(record);
 
         var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        var policy = BuildBasePolicy(record, disabled, passwordResetProviderId, config);
+        if (restrictedCreator is not null)
+        {
+            CapToCreator(policy, restrictedCreator);
+        }
+
+        return policy;
+    }
+
+    private static void CapToCreator(UserPolicy policy, User creator)
+    {
+        policy.EnableRemoteAccess &= creator.HasPermission(PermissionKind.EnableRemoteAccess);
+        policy.EnableMediaPlayback &= creator.HasPermission(PermissionKind.EnableMediaPlayback);
+        policy.EnableAudioPlaybackTranscoding &= creator.HasPermission(PermissionKind.EnableAudioPlaybackTranscoding);
+        policy.EnableVideoPlaybackTranscoding &= creator.HasPermission(PermissionKind.EnableVideoPlaybackTranscoding);
+        policy.EnablePlaybackRemuxing &= creator.HasPermission(PermissionKind.EnablePlaybackRemuxing);
+        policy.EnableLiveTvAccess &= creator.HasPermission(PermissionKind.EnableLiveTvAccess);
+        policy.EnableContentDownloading &= creator.HasPermission(PermissionKind.EnableContentDownloading);
+
+        var creatorLimit = creator.RemoteClientBitrateLimit ?? 0;
+        if (creatorLimit > 0 && (policy.RemoteClientBitrateLimit <= 0 || creatorLimit < policy.RemoteClientBitrateLimit))
+        {
+            policy.RemoteClientBitrateLimit = creatorLimit;
+        }
+
+        // The enum runs from most access to least, so the larger value is the tighter one.
+        if ((int)creator.SyncPlayAccess > (int)policy.SyncPlayAccess)
+        {
+            policy.SyncPlayAccess = creator.SyncPlayAccess;
+        }
+    }
+
+    private static UserPolicy BuildBasePolicy(ShareLinkRecord record, bool disabled, string? passwordResetProviderId, Configuration.PluginConfiguration config)
+    {
         return new UserPolicy
         {
             // Hand the account to a provider that refuses interactive sign-in. If the

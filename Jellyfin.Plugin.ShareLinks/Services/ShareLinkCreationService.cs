@@ -40,10 +40,24 @@ public sealed class ShareLinkCreationService
         return await CreateAsync(item, createdByUserId, expiryHours, oneUse, false, false, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Creates a share for an administrator, with nothing held back.</summary>
+    public Task<(ShareLinkRecord Record, string RawToken)> CreateAsync(
+        BaseItem item,
+        Guid createdByUserId,
+        int expiryHours,
+        bool oneUse,
+        bool watchParty,
+        bool watchPartyHostOnly,
+        CancellationToken cancellationToken)
+    {
+        return CreateAsync(item, createdByUserId, expiryHours, oneUse, watchParty, watchPartyHostOnly, null, cancellationToken);
+    }
+
     /// <summary>
     /// Creates a new share-link record and returns the raw token once. A watch party
     /// is created without its group; the caller opens the group in the host's
-    /// session and stores its id on the record.
+    /// session and stores its id on the record. A regular user's share passes
+    /// <paramref name="canInclude"/>, which keeps the tag to what that user can open.
     /// </summary>
     public async Task<(ShareLinkRecord Record, string RawToken)> CreateAsync(
         BaseItem item,
@@ -52,6 +66,7 @@ public sealed class ShareLinkCreationService
         bool oneUse,
         bool watchParty,
         bool watchPartyHostOnly,
+        Func<BaseItem, bool>? canInclude,
         CancellationToken cancellationToken)
     {
         if (item is null)
@@ -64,6 +79,11 @@ public sealed class ShareLinkCreationService
         if (watchParty && !ShareableItemPolicy.SupportsWatchParty(kind))
         {
             throw new ArgumentException($"A {kind} share cannot be a watch party.", nameof(watchParty));
+        }
+
+        if (canInclude is not null && !_itemTagService.CanCover(item, canInclude))
+        {
+            throw new UnauthorizedAccessException("The share would reach items its creator cannot open.");
         }
 
         var token = await _tokenService.GenerateAsync(cancellationToken).ConfigureAwait(false);
@@ -82,6 +102,7 @@ public sealed class ShareLinkCreationService
             Kind = kind,
             WatchParty = watchParty,
             WatchPartyHostOnly = watchParty && watchPartyHostOnly,
+            RestrictedCreator = canInclude is not null,
             AllowedTag = $"sharelinks-{Guid.NewGuid():N}",
             CleanupAttempts = 0
         };
@@ -92,7 +113,7 @@ public sealed class ShareLinkCreationService
         {
             if (!string.IsNullOrWhiteSpace(record.AllowedTag))
             {
-                record.MetadataTouched = await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
+                record.MetadataTouched = await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, canInclude, cancellationToken).ConfigureAwait(false);
             }
 
             record.Status = ShareLinkStatus.Active;

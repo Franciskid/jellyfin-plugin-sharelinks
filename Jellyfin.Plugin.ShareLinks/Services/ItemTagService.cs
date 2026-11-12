@@ -85,15 +85,36 @@ public sealed class ItemTagService
     /// browse down through the shared branch instead of only seeing the single node
     /// the link was created on.
     /// </summary>
-    public async Task<bool> EnsureTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
+    public Task<bool> EnsureTagTreeAsync(BaseItem item, string tag, CancellationToken cancellationToken)
+    {
+        return EnsureTagTreeAsync(item, tag, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// As <see cref="EnsureTagTreeAsync(BaseItem, string, CancellationToken)"/>, held to
+    /// what <paramref name="canInclude"/> accepts. With a filter the tag is also taken
+    /// off anything that carries it but is no longer covered, so access the creator
+    /// has lost since the link was made goes with it.
+    /// </summary>
+    public async Task<bool> EnsureTagTreeAsync(BaseItem item, string tag, Func<BaseItem, bool>? canInclude, CancellationToken cancellationToken)
     {
         if (item is null)
         {
             throw new ArgumentNullException(nameof(item));
         }
 
-        var targets = BuildTagTreeTargets(item);
+        var targets = BuildTagTreeTargets(item, canInclude);
         var changed = false;
+        if (canInclude is not null)
+        {
+            var covered = new HashSet<Guid>(targets.Select(target => target.Id));
+            foreach (var stale in _treeSource.GetItemsWithTag(tag).Where(tagged => !covered.Contains(tagged.Id)).ToList())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                changed |= await RemoveTagAsync(stale, tag, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         foreach (var target in targets)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -152,6 +173,36 @@ public sealed class ItemTagService
     /// </remarks>
     public List<BaseItem> BuildTagTreeTargets(BaseItem item)
     {
+        return BuildTagTreeTargets(item, null);
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether a share of <paramref name="item"/> held to
+    /// <paramref name="canInclude"/> would still cover the item itself.
+    /// </summary>
+    public bool CanCover(BaseItem item, Func<BaseItem, bool> canInclude)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(canInclude);
+
+        var targets = BuildTagTreeTargets(item, canInclude);
+        return targets.Count > 0 && targets[0].Id.Equals(item.Id);
+    }
+
+    /// <summary>
+    /// As <see cref="BuildTagTreeTargets(BaseItem)"/>, leaving out what
+    /// <paramref name="canInclude"/> refuses. Used for a regular user's share, which
+    /// must not reach past what that user can open.
+    /// </summary>
+    /// <remarks>
+    /// A refused item cannot simply be skipped when it sits physically below
+    /// something that gets the tag: it would inherit the tag from there and the
+    /// guest would open it anyway. So an item with anything refused below it is left
+    /// out whole. For the shared item itself that leaves nothing, and the share is
+    /// refused; for a member of a collection or playlist, only that member drops out.
+    /// </remarks>
+    public List<BaseItem> BuildTagTreeTargets(BaseItem item, Func<BaseItem, bool>? canInclude)
+    {
         ArgumentNullException.ThrowIfNull(item);
 
         var targets = new List<BaseItem>();
@@ -162,11 +213,26 @@ public sealed class ItemTagService
         while (pending.Count > 0)
         {
             var current = pending.Pop();
-            if (ShareableItemPolicy.IsStructural(current) || !seen.Add(current.Id))
+            if (ShareableItemPolicy.IsStructural(current) || seen.Contains(current.Id))
             {
                 continue;
             }
 
+            List<BaseItem>? descendants = null;
+            if (current is Folder container)
+            {
+                descendants = _treeSource.GetPhysicalDescendants(container)
+                    .Where(child => !ShareableItemPolicy.IsStructuralType(child))
+                    .ToList();
+            }
+
+            if (canInclude is not null
+                && (!canInclude(current) || (descendants is not null && !descendants.All(canInclude))))
+            {
+                continue;
+            }
+
+            seen.Add(current.Id);
             targets.Add(current);
 
             if (current is MusicArtist artist)
@@ -182,9 +248,9 @@ public sealed class ItemTagService
                 continue;
             }
 
-            foreach (var child in _treeSource.GetPhysicalDescendants(folder))
+            foreach (var child in descendants!)
             {
-                if (!ShareableItemPolicy.IsStructuralType(child) && seen.Add(child.Id))
+                if (seen.Add(child.Id))
                 {
                     targets.Add(child);
                 }

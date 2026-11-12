@@ -9,6 +9,8 @@
     var injectedAttr = 'data-sharelinks-injected';
     var configPromise = null;
     var configPromiseUserId = null;
+    var shareOptionsPromise = null;
+    var shareOptionsPromiseUserId = null;
     var toastHost = null;
     var toastHostObserver = null;
     var userPromise = null;
@@ -84,7 +86,7 @@
             multiUseLimit: 'Up to {count} of them can watch at the same time.',
             resultMultiUseNote: 'Anyone you send this link to can open it until it expires.',
             cannotDetermineItem: 'Could not determine which item to share. Open the item page and retry.',
-            adminOnly: 'ShareLinks is available to administrators only.',
+            adminOnly: 'Your account is not allowed to create share links.',
             disabled: 'ShareLinks is disabled.',
             noShareUrl: 'The server did not return a share URL.',
             couldNotCreate: 'Could not create a guest link.',
@@ -123,7 +125,7 @@
             multiUseLimit: 'Jusqu\'a {count} d\'entre elles peuvent regarder en meme temps.',
             resultMultiUseNote: 'Toutes les personnes à qui vous envoyez ce lien peuvent l\'ouvrir jusqu\'à son expiration.',
             cannotDetermineItem: 'Impossible de déterminer l\'élément à partager. Ouvrez la page du média et réessayez.',
-            adminOnly: 'ShareLinks est réservé aux administrateurs.',
+            adminOnly: 'Votre compte n\'est pas autorisé à créer des liens de partage.',
             disabled: 'ShareLinks est désactivé.',
             noShareUrl: 'Le serveur n\'a pas renvoyé de lien de partage.',
             couldNotCreate: 'Impossible de créer le lien invité.',
@@ -278,6 +280,27 @@
             });
         }
         return configPromise;
+    }
+
+    /**
+     * Whether the signed-in user may share, and the defaults for the create popup.
+     * Asked of the plugin rather than read from its configuration, which only an
+     * administrator can fetch. The server decides again on every create; this only
+     * keeps the menu entry away from people it would refuse.
+     */
+    function getShareOptions(fresh) {
+        var userId = currentApiUserId();
+        if (fresh || !shareOptionsPromise || shareOptionsPromiseUserId !== userId) {
+            shareOptionsPromiseUserId = userId;
+            shareOptionsPromise = apiGet('ShareLinks/CreateOptions').catch(function () {
+                return null;
+            });
+        }
+        return shareOptionsPromise;
+    }
+
+    function canShare(options) {
+        return !!(options && options.CanShare === true);
     }
 
     /**
@@ -569,8 +592,8 @@
     }
 
     async function scanForMoreMenuActions() {
-        var user = await getCurrentUser();
-        if (!isAdministrator(user)) {
+        var options = await getShareOptions();
+        if (!canShare(options)) {
             // Take back anything injected for a previous session rather than only
             // skipping: a switch inside the SPA leaves the old DOM in place.
             removeInjectedActions();
@@ -1172,9 +1195,8 @@
         }
 
         try {
-            var config = await getConfig(true);
-            var user = await getCurrentUser();
-            if (!isAdministrator(user)) {
+            var config = await getShareOptions(true);
+            if (!canShare(config)) {
                 notify(t('adminOnly'));
                 return;
             }

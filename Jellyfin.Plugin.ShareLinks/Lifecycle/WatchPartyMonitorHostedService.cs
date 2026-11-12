@@ -42,6 +42,7 @@ public sealed class WatchPartyMonitorHostedService : BackgroundService
                 try
                 {
                     await _cleanupService.EndFinishedWatchPartiesAsync(stoppingToken).ConfigureAwait(false);
+                    await _cleanupService.EndSharesOfRevokedCreatorsAsync(stoppingToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {

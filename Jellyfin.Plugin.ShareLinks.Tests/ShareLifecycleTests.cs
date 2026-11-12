@@ -36,7 +36,7 @@ public sealed class ShareLifecycleTests : IDisposable
     private readonly Mock<ISessionManager> _sessions = new();
     private readonly Mock<ISyncPlayManager> _syncPlay = new();
     private readonly FakeTree _tree = new();
-    private readonly User _host = TestSupport.Regular();
+    private readonly User _host = TestSupport.Admin();
     private readonly ShareTokenService _tokens;
     private readonly ItemTagService _tags;
     private readonly JellyfinGuestUserService _guests;
@@ -70,9 +70,9 @@ public sealed class ShareLifecycleTests : IDisposable
         _tags = new ItemTagService(_library.Object, _tree, NullLogger<ItemTagService>.Instance);
         _guests = new JellyfinGuestUserService(_users.Object, _devices.Object, _sessions.Object, _library.Object, NullLogger<JellyfinGuestUserService>.Instance);
         _watchParty = new WatchPartyService(_syncPlay.Object, _sessions.Object, _users.Object, _temp.Store, NullLogger<WatchPartyService>.Instance);
-        _cleanup = new ShareLinkCleanupService(_temp.Store, _library.Object, _tags, _guests, _watchParty, NullLogger<ShareLinkCleanupService>.Instance);
+        _cleanup = new ShareLinkCleanupService(_temp.Store, _library.Object, _tags, _guests, _watchParty, _users.Object, NullLogger<ShareLinkCleanupService>.Instance);
         _creation = new ShareLinkCreationService(_temp.Store, _tokens, _tags, NullLogger<ShareLinkCreationService>.Instance);
-        _redemption = new ShareLinkRedemptionService(_library.Object, _temp.Store, _tokens, _tags, _guests, _cleanup, _watchParty, _sessions.Object, NullLogger<ShareLinkRedemptionService>.Instance);
+        _redemption = new ShareLinkRedemptionService(_library.Object, _temp.Store, _tokens, _tags, _guests, _cleanup, _watchParty, _sessions.Object, _users.Object, NullLogger<ShareLinkRedemptionService>.Instance);
     }
 
     [Fact]

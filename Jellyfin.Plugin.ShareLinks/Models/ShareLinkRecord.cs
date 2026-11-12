@@ -82,4 +82,11 @@ public sealed class ShareLinkRecord
     /// what is playing. Guests can still buffer, which makes the group wait for them.
     /// </summary>
     public bool WatchPartyHostOnly { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a regular user created the link. Such
+    /// a share ends with its creator; an administrator's outlives them. Older records
+    /// read back as false.
+    /// </summary>
+    public bool RestrictedCreator { get; set; }
 }

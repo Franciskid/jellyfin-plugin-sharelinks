@@ -1,3 +1,4 @@
+using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.ShareLinks.Configuration;
 using Jellyfin.Plugin.ShareLinks.Models;
@@ -72,6 +73,13 @@ internal static class TestSupport
         {
             Id = id ?? Guid.NewGuid()
         };
+    }
+
+    public static User Admin(Guid? id = null)
+    {
+        var user = Regular(id);
+        user.SetPermission(Jellyfin.Database.Implementations.Enums.PermissionKind.IsAdministrator, true);
+        return user;
     }
 
     public static ShareLinkRecord ActiveRecord(Guid guestUserId, Action<ShareLinkRecord>? configure = null)

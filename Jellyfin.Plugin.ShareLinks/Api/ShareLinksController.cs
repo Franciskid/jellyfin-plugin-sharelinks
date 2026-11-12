@@ -8,10 +8,13 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ShareLinks.Configuration;
+using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.ShareLinks.Models;
+using Jellyfin.Plugin.ShareLinks.Security;
 using Jellyfin.Plugin.ShareLinks.Services;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Authorization;
@@ -116,6 +119,25 @@ public sealed class ShareLinkGuestStateDto
     public bool WatchPartyHostOnly { get; set; }
 }
 
+/// <summary>What the create popup needs to know, for whoever is signed in.</summary>
+public sealed class ShareLinkCreateOptionsDto
+{
+    /// <summary>Gets or sets a value indicating whether the caller may create share links.</summary>
+    public bool CanShare { get; set; }
+
+    public bool Enabled { get; set; }
+
+    public int DefaultExpiryHours { get; set; }
+
+    public int MaxExpiryHours { get; set; }
+
+    public bool OneUseDefault { get; set; }
+
+    public bool WatchPartyEnabled { get; set; }
+
+    public int MaxConcurrentViewers { get; set; }
+}
+
 /// <summary>An installed plugin, as offered in the guard's exception list.</summary>
 public sealed class ShareLinkPluginDto
 {
@@ -141,6 +163,8 @@ public sealed class ShareLinksController : ControllerBase
     private readonly ShareLinkStore _store;
     private readonly WatchPartyService _watchPartyService;
     private readonly IPluginManager _pluginManager;
+    private readonly IUserManager _userManager;
+    private readonly ItemTagService _itemTagService;
     private readonly ILogger<ShareLinksController> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ShareLinksController"/> class.</summary>
@@ -152,6 +176,8 @@ public sealed class ShareLinksController : ControllerBase
         ShareLinkStore store,
         WatchPartyService watchPartyService,
         IPluginManager pluginManager,
+        IUserManager userManager,
+        ItemTagService itemTagService,
         ILogger<ShareLinksController> logger)
     {
         _libraryManager = libraryManager;
@@ -161,6 +187,8 @@ public sealed class ShareLinksController : ControllerBase
         _store = store;
         _watchPartyService = watchPartyService;
         _pluginManager = pluginManager;
+        _userManager = userManager;
+        _itemTagService = itemTagService;
         _logger = logger;
     }
 
@@ -197,12 +225,12 @@ public sealed class ShareLinksController : ControllerBase
     public async Task<ActionResult<ShareLinkCreateResponse>> Create([FromBody] ShareLinkCreateRequest request, CancellationToken cancellationToken)
     {
         SetNoStoreHeaders();
-        if (!User.IsInRole("Administrator"))
+        var config = Config;
+        if (!TryGetSharer(config, out var sharer))
         {
             return Forbid();
         }
 
-        var config = Config;
         if (!config.Enabled)
         {
             return StatusCode(503, new { error = "ShareLinks is disabled." });
@@ -233,7 +261,10 @@ public sealed class ShareLinksController : ControllerBase
         }
 
         var item = _libraryManager.GetItemById(itemId);
-        if (item is null)
+
+        // An item a regular user cannot open is answered exactly like one that does
+        // not exist, so the endpoint cannot be used to probe for ids.
+        if (item is null || (sharer is not null && !ShareCreatorPolicy.CanOpen(sharer, item)))
         {
             _logger.LogWarning("ShareLinks: create rejected, item {ItemId} not found.", itemId);
             return NotFound(new { error = "Item not found." });
@@ -250,6 +281,26 @@ public sealed class ShareLinksController : ControllerBase
             return BadRequest(new { error = "This can't be shared. Share a title, a track, an album, a photo, a book, a collection, a playlist, a folder or a Live TV channel." });
         }
 
+        // Null for an administrator. For a regular user, the share is held to what
+        // they can open: a collection drops the members they cannot see, and anything
+        // with a hidden item physically inside it is refused outright.
+        Func<BaseItem, bool>? canInclude = null;
+        if (sharer is not null)
+        {
+            canInclude = candidate => ShareCreatorPolicy.CanOpen(sharer, candidate);
+            if (!ShareCreatorPolicy.CanShareItem(sharer, item, kind.Value) || !_itemTagService.CanCover(item, canInclude))
+            {
+                _logger.LogWarning("ShareLinks: create rejected, {UserName} cannot open everything in item {ItemId}.", sharer.Username, itemId);
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "You can't share this: it contains something you don't have access to." });
+            }
+
+            var limit = config.MaxLinksPerUser;
+            if (limit > 0 && await CountLiveLinksAsync(sharer.Id, cancellationToken).ConfigureAwait(false) >= limit)
+            {
+                return StatusCode(StatusCodes.Status429TooManyRequests, new { error = $"You already have {limit} active share links. Wait for one to expire, or ask an administrator to revoke one." });
+            }
+        }
+
         var watchParty = request.WatchParty == true;
         SessionInfo? hostSession = null;
         var creatorUserId = GetCurrentUserId();
@@ -258,6 +309,11 @@ public sealed class ShareLinksController : ControllerBase
             if (!config.WatchPartyEnabled)
             {
                 return BadRequest(new { error = "Watch parties are turned off in the ShareLinks settings." });
+            }
+
+            if (sharer is not null && !ShareCreatorPolicy.CanHostWatchParty(sharer))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { error = "Your account is not allowed to start SyncPlay groups." });
             }
 
             if (!ShareableItemPolicy.SupportsWatchParty(kind.Value))
@@ -282,6 +338,7 @@ public sealed class ShareLinksController : ControllerBase
                 oneUse,
                 watchParty,
                 request.HostOnlyControl ?? true,
+                canInclude,
                 cancellationToken).ConfigureAwait(false);
 
             if (hostSession is not null)
@@ -306,7 +363,7 @@ public sealed class ShareLinksController : ControllerBase
             return Ok(new ShareLinkCreateResponse
             {
                 ShareUrl = shareUrl,
-                Record = ToDto(creation.Record)
+                Record = ToDto(creation.Record, sharer is null)
             });
         }
         catch (Exception ex)
@@ -341,19 +398,55 @@ public sealed class ShareLinksController : ControllerBase
         };
     }
 
-    /// <summary>Lists all share links for administrators.</summary>
+    /// <summary>
+    /// Tells the web client whether the signed-in user may share, and with which
+    /// defaults. Regular users cannot read the plugin configuration, so the few
+    /// values the create popup needs are answered here.
+    /// </summary>
+    [HttpGet("CreateOptions")]
+    [Authorize(AuthenticationSchemes = "CustomAuthentication")]
+    public ActionResult<ShareLinkCreateOptionsDto> CreateOptions()
+    {
+        SetNoStoreHeaders();
+        var config = Config;
+        if (!TryGetSharer(config, out var sharer))
+        {
+            return Ok(new ShareLinkCreateOptionsDto());
+        }
+
+        return Ok(new ShareLinkCreateOptionsDto
+        {
+            CanShare = true,
+            Enabled = config.Enabled,
+            DefaultExpiryHours = config.DefaultExpiryHours,
+            MaxExpiryHours = config.MaxExpiryHours > 0 ? config.MaxExpiryHours : 720,
+            OneUseDefault = config.OneUseDefault,
+            WatchPartyEnabled = config.WatchPartyEnabled && (sharer is null || ShareCreatorPolicy.CanHostWatchParty(sharer)),
+            MaxConcurrentViewers = config.MaxConcurrentViewers
+        });
+    }
+
+    /// <summary>Lists share links: all of them for an administrator, a regular user's own otherwise.</summary>
     [HttpGet("Admin/List")]
     [Authorize(AuthenticationSchemes = "CustomAuthentication")]
     public async Task<ActionResult<IEnumerable<ShareLinkAdminRecordDto>>> List(CancellationToken cancellationToken)
     {
         SetNoStoreHeaders();
-        if (!User.IsInRole("Administrator"))
+        if (!TryGetSharer(Config, out var sharer))
         {
             return Forbid();
         }
 
         var records = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
-        return Ok(records.Select(ToDto).ToArray());
+        if (sharer is not null)
+        {
+            return Ok(records
+                .Where(record => record.CreatedByUserId.HasValue && record.CreatedByUserId.Value.Equals(sharer.Id))
+                .Select(record => ToDto(record, false))
+                .ToArray());
+        }
+
+        return Ok(records.Select(record => Rebase(ToDto(record, true))).ToArray());
     }
 
     /// <summary>Revokes a share link and triggers cleanup.</summary>
@@ -362,9 +455,20 @@ public sealed class ShareLinksController : ControllerBase
     public async Task<ActionResult<ShareLinkAdminRecordDto>> Revoke(Guid id, CancellationToken cancellationToken)
     {
         SetNoStoreHeaders();
-        if (!User.IsInRole("Administrator"))
+        if (!TryGetSharer(Config, out var sharer))
         {
             return Forbid();
+        }
+
+        if (sharer is not null)
+        {
+            // A regular user revokes their own links only. Someone else's is
+            // answered as missing, so ids cannot be probed.
+            var existing = await _store.GetByIdAsync(id, cancellationToken).ConfigureAwait(false);
+            if (existing is null || !existing.CreatedByUserId.HasValue || !existing.CreatedByUserId.Value.Equals(sharer.Id))
+            {
+                return NotFound(new { error = "Share link not found." });
+            }
         }
 
         var record = await _cleanupService.RevokeAsync(id, cancellationToken).ConfigureAwait(false);
@@ -373,7 +477,7 @@ public sealed class ShareLinksController : ControllerBase
             return NotFound(new { error = "Share link not found." });
         }
 
-        return Ok(ToDto(record));
+        return Ok(ToDto(record, sharer is null));
     }
 
     /// <summary>Removes revoked, expired and failed share links from the store.</summary>
@@ -582,8 +686,87 @@ setTimeout(function () { window.location.replace({{redirectUrlJson}}); }, 4000);
         };
     }
 
-    private static ShareLinkAdminRecordDto ToDto(ShareLinkRecord record)
+    /// <summary>
+    /// Works out who is asking. False when they may not share at all. On true,
+    /// <paramref name="sharer"/> is null for an administrator (or an API key, which
+    /// has no user) and the user themselves for a regular user allowed to share.
+    /// </summary>
+    private bool TryGetSharer(PluginConfiguration config, out User? sharer)
     {
+        sharer = null;
+        if (User.IsInRole("Administrator"))
+        {
+            return true;
+        }
+
+        var userId = GetCurrentUserId();
+        var user = userId == Guid.Empty ? null : _userManager.GetUserById(userId);
+        if (!ShareCreatorPolicy.CanCreate(config, user))
+        {
+            return false;
+        }
+
+        sharer = user;
+        return true;
+    }
+
+    private async Task<int> CountLiveLinksAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var records = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
+        return records.Count(record =>
+            record.CreatedByUserId.HasValue
+            && record.CreatedByUserId.Value.Equals(userId)
+            && record.ExpiresAtUtc > now
+            && record.Status is ShareLinkStatus.Pending or ShareLinkStatus.Active or ShareLinkStatus.Redeeming or ShareLinkStatus.Redeemed);
+    }
+
+    /// <summary>
+    /// Rebuilds a stored share URL on the address the administrator is using. The
+    /// stored one took its host from the creator's request, and with regular users
+    /// creating links that is no longer something to put in front of an admin as a
+    /// clickable link.
+    /// </summary>
+    private ShareLinkAdminRecordDto Rebase(ShareLinkAdminRecordDto dto)
+    {
+        const string Marker = "/ShareLinks/Redeem?t=";
+        var url = dto.ShareUrl;
+        if (string.IsNullOrEmpty(url))
+        {
+            return dto;
+        }
+
+        var index = url.LastIndexOf(Marker, StringComparison.Ordinal);
+        dto.ShareUrl = index < 0
+            ? null
+            : BuildShareUrl(Request, Uri.UnescapeDataString(url[(index + Marker.Length)..]));
+        return dto;
+    }
+
+    private static ShareLinkAdminRecordDto ToDto(ShareLinkRecord record, bool forAdministrator)
+    {
+        if (!forAdministrator)
+        {
+            // A regular user sees what they need to manage their own links, not the
+            // guest account, the tag or the server's cleanup errors behind them.
+            return new ShareLinkAdminRecordDto
+            {
+                Id = record.Id,
+                ItemId = record.ItemId,
+                ItemNameSnapshot = record.ItemNameSnapshot,
+                CreatedByUserId = record.CreatedByUserId,
+                CreatedAtUtc = record.CreatedAtUtc,
+                RedeemedAtUtc = record.RedeemedAtUtc,
+                ExpiresAtUtc = record.ExpiresAtUtc,
+                Status = record.Status,
+                OneUse = record.OneUse,
+                ShareUrl = record.ShareUrl,
+                Kind = record.Kind,
+                WatchParty = record.WatchParty,
+                WatchPartyHostOnly = record.WatchPartyHostOnly
+            };
+        }
+
         return new ShareLinkAdminRecordDto
         {
             Id = record.Id,

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ShareLinks.Models;
+using Jellyfin.Plugin.ShareLinks.Security;
 using Jellyfin.Plugin.ShareLinks.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -20,6 +21,7 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
     private readonly ItemTagService _itemTagService;
     private readonly JellyfinGuestUserService _guestUserService;
     private readonly WatchPartyService _watchPartyService;
+    private readonly IUserManager _userManager;
     private readonly ILogger<ShareLinkCleanupService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ShareLinkCleanupService"/> class.</summary>
@@ -29,6 +31,7 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         ItemTagService itemTagService,
         JellyfinGuestUserService guestUserService,
         WatchPartyService watchPartyService,
+        IUserManager userManager,
         ILogger<ShareLinkCleanupService> logger)
     {
         _store = store;
@@ -36,6 +39,7 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         _itemTagService = itemTagService;
         _guestUserService = guestUserService;
         _watchPartyService = watchPartyService;
+        _userManager = userManager;
         _logger = logger;
     }
 
@@ -50,6 +54,36 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         }
 
         await EndFinishedWatchPartiesAsync(cancellationToken).ConfigureAwait(false);
+        await EndSharesOfRevokedCreatorsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ends every live share whose creator has been deleted, disabled or taken off
+    /// the list of users who may share. Redemption checks this too; this pass is
+    /// what signs out the guests who were already in.
+    /// </summary>
+    public async Task<int> EndSharesOfRevokedCreatorsAsync(CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        var now = DateTimeOffset.UtcNow;
+        var records = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
+        var ended = 0;
+        foreach (var record in records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (record.ExpiresAtUtc <= now
+                || record.Status is not (ShareLinkStatus.Pending or ShareLinkStatus.Active or ShareLinkStatus.Redeeming or ShareLinkStatus.Redeemed)
+                || ShareCreatorPolicy.Evaluate(config, record, _userManager, out _) != CreatorStanding.Revoked)
+            {
+                continue;
+            }
+
+            _logger.LogInformation("ShareLinks: ending record {RecordId}, its creator may no longer share.", record.Id);
+            await RevokeAsync(record.Id, cancellationToken).ConfigureAwait(false);
+            ended++;
+        }
+
+        return ended;
     }
 
     /// <summary>

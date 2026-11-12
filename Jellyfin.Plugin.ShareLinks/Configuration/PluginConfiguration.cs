@@ -87,4 +87,23 @@ public class PluginConfiguration : BasePluginConfiguration
     /// links, which put every guest into a SyncPlay group opened for the link.
     /// </summary>
     public bool WatchPartyEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether every regular user may create share
+    /// links. Off by default. A regular user can only share what they can open
+    /// themselves, and guest accounts can never share.
+    /// </summary>
+    public bool AllowAllUsersToShare { get; set; }
+
+    /// <summary>
+    /// Gets or sets the ids of the regular users who may create share links when
+    /// <see cref="AllowAllUsersToShare"/> is off. Administrators always can.
+    /// </summary>
+    public string[] SharingUserIds { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Gets or sets how many links a regular user may have live at once. 0 means no
+    /// limit. Administrators are not limited.
+    /// </summary>
+    public int MaxLinksPerUser { get; set; } = 20;
 }
