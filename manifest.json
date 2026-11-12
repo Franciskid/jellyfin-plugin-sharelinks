@@ -9,6 +9,14 @@
         "imageUrl": "",
         "versions": [
             {
+                "version": "1.2.0.0",
+                "changelog": "Non-admin users can now create share links (#26): a new \"Who can share\" setting lets every user share, or only the ones you tick. Off by default. A regular user can only share what they can open themselves, their guests get no playback right they don't have, and their links end if they are deleted, disabled or taken off the list. The links table now shows who shared each link.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/Franciskid/jellyfin-plugin-sharelinks/releases/download/v1.2.0.0/sharelinks_1.2.0.0.zip",
+                "checksum": "d1350b20dc0bbb45f498fabfe03e2d73",
+                "timestamp": "2026-11-12T07:39:09Z"
+            },
+            {
                 "version": "1.1.2.0",
                 "changelog": "The share popup now uses your settings right after you sign in, instead of ignoring them until a reload. Watch-party guests see Jellyfin's \"SyncPlay enabled\" notice and ours stacked instead of overlapping. The links table on the settings page is easier to read.",
                 "targetAbi": "10.11.0.0",
