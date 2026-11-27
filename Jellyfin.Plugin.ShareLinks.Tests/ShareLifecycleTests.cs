@@ -144,6 +144,61 @@ public sealed class ShareLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task CheckingALinkSpendsNothing()
+    {
+        var movie = Known(TestSupport.Item<Movie>());
+        var (record, token) = await _creation.CreateAsync(movie, _host.Id, 4, true, CancellationToken.None);
+
+        Assert.True(await _redemption.LooksRedeemableAsync(token, CancellationToken.None));
+        Assert.True(await _redemption.LooksRedeemableAsync(token, CancellationToken.None));
+
+        var saved = (await _temp.Store.GetByIdAsync(record.Id))!;
+        Assert.Equal(ShareLinkStatus.Active, saved.Status);
+        Assert.Null(saved.GuestUserId);
+        Assert.Null(saved.RedeemedAtUtc);
+        _sessions.Verify(s => s.AuthenticateDirect(It.IsAny<AuthenticationRequest>()), Times.Never);
+
+        // The check said yes, and the link still redeems afterwards.
+        Assert.NotNull((await _redemption.RedeemAsync(token, Request(), CancellationToken.None)).Html);
+    }
+
+    [Fact]
+    public async Task CheckingRefusesLinksThatCanNoLongerBeOpened()
+    {
+        var movie = Known(TestSupport.Item<Movie>());
+        Assert.False(await _redemption.LooksRedeemableAsync("not-a-token", CancellationToken.None));
+
+        var (_, used) = await _creation.CreateAsync(movie, _host.Id, 4, true, CancellationToken.None);
+        Assert.NotNull((await _redemption.RedeemAsync(used, Request(), CancellationToken.None)).Html);
+        Assert.False(await _redemption.LooksRedeemableAsync(used, CancellationToken.None));
+
+        var (multi, multiToken) = await _creation.CreateAsync(movie, _host.Id, 4, false, CancellationToken.None);
+        Assert.NotNull((await _redemption.RedeemAsync(multiToken, Request(), CancellationToken.None)).Html);
+        Assert.True(await _redemption.LooksRedeemableAsync(multiToken, CancellationToken.None));
+
+        await _cleanup.RevokeAsync(multi.Id, CancellationToken.None);
+        Assert.False(await _redemption.LooksRedeemableAsync(multiToken, CancellationToken.None));
+
+        var (expired, expiredToken) = await _creation.CreateAsync(movie, _host.Id, 4, false, CancellationToken.None);
+        expired.ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await _temp.Store.UpdateAsync(expired);
+        Assert.False(await _redemption.LooksRedeemableAsync(expiredToken, CancellationToken.None));
+        Assert.Equal(ShareLinkStatus.Active, (await _temp.Store.GetByIdAsync(expired.Id))!.Status);
+    }
+
+    [Fact]
+    public void TheCheckPageComesBackWithTheContinueParameterAndOnlyReadsTheLogin()
+    {
+        var html = ShareLinkRedemptionService.BuildCheckHtml(Request());
+
+        Assert.Contains("\"" + ShareLinkRedemptionService.ContinueParameter + "\"", html);
+        Assert.Contains("\"/jf/ShareLinks/GuestState\"", html);
+        Assert.Contains("\"/jf/web/\"", html);
+        Assert.DoesNotContain("localStorage.setItem", html);
+        Assert.DoesNotContain("localStorage.removeItem", html);
+    }
+
+    [Fact]
     public async Task APartyThatEndedCannotBeRedeemed()
     {
         var movie = Known(TestSupport.Item<Movie>());
@@ -222,16 +277,12 @@ public sealed class ShareLifecycleTests : IDisposable
             r.ItemId = channel.Id.ToString("D");
         });
 
-        await _cleanup.HealLiveTvTagAsync(record, CancellationToken.None);
+        await _cleanup.HealShareTagAsync(record, CancellationToken.None);
         Assert.Contains(record.AllowedTag!, channel.Tags);
         Assert.Contains("news", channel.Tags);
 
-        var movie = Known(TestSupport.Item<Movie>());
-        await _cleanup.HealLiveTvTagAsync(TestSupport.ActiveRecord(Guid.NewGuid(), r => r.ItemId = movie.Id.ToString("D")), CancellationToken.None);
-        Assert.Empty(movie.Tags);
-
         var endedChannel = Known(new LiveTvChannel { Id = Guid.NewGuid() });
-        await _cleanup.HealLiveTvTagAsync(
+        await _cleanup.HealShareTagAsync(
             TestSupport.ActiveRecord(Guid.NewGuid(), r =>
             {
                 r.Kind = ShareKind.LiveTv;
@@ -240,6 +291,28 @@ public sealed class ShareLifecycleTests : IDisposable
             }),
             CancellationToken.None);
         Assert.Empty(endedChannel.Tags);
+    }
+
+    [Fact]
+    public async Task ATitleGetsItsTagBackAfterAMetadataRefresh()
+    {
+        var movie = Known(TestSupport.Item<Movie>());
+        var (record, token) = await _creation.CreateAsync(movie, _host.Id, 4, false, CancellationToken.None);
+        Assert.NotNull((await _redemption.RedeemAsync(token, Request(), CancellationToken.None)).Html);
+        var live = (await _temp.Store.GetByIdAsync(record.Id))!;
+
+        // What a "scan for new and updated files" does when the NFO brings tags of its own.
+        movie.Tags = new[] { "from-nfo" };
+        await _cleanup.HealShareTagAsync(live, CancellationToken.None);
+
+        Assert.Contains(record.AllowedTag!, movie.Tags);
+        Assert.Contains("from-nfo", movie.Tags);
+
+        // An ended share is left alone.
+        movie.Tags = Array.Empty<string>();
+        live.Status = ShareLinkStatus.Revoked;
+        await _cleanup.HealShareTagAsync(live, CancellationToken.None);
+        Assert.Empty(movie.Tags);
     }
 
     [Fact]

@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -13,14 +13,17 @@ namespace Jellyfin.Plugin.ShareLinks.Web;
 /// Adds the plugin's client script tag to the web client's index.html while
 /// Jellyfin serves it, so nothing on disk has to be writable.
 /// </summary>
+/// <remarks>
+/// It logs, once each, what it did with the page: tagged it, found the tag already
+/// there, or left it alone and why. So a server log with no ShareLinks line about
+/// index.html at all means this never saw the page, and something earlier in the
+/// pipeline answered it.
+/// </remarks>
 public sealed class IndexHtmlScriptMiddleware
 {
-    private const string ScriptMarker = "ShareLinks/ClientScript";
-    private const string Snippet = "\n<!-- ShareLinks:begin -->\n<script src=\"../ShareLinks/ClientScript\" defer></script>\n<!-- ShareLinks:end -->\n";
-
     private readonly RequestDelegate _next;
     private readonly ILogger<IndexHtmlScriptMiddleware> _logger;
-    private int _logged;
+    private readonly ConcurrentDictionary<string, bool> _logged = new(StringComparer.Ordinal);
 
     /// <summary>Initializes a new instance of the <see cref="IndexHtmlScriptMiddleware"/> class.</summary>
     public IndexHtmlScriptMiddleware(RequestDelegate next, ILogger<IndexHtmlScriptMiddleware> logger)
@@ -62,9 +65,23 @@ public sealed class IndexHtmlScriptMiddleware
         }
 
         var bytes = buffer.ToArray();
-        if (context.Response.StatusCode == StatusCodes.Status200OK
-            && context.Response.ContentType is not null
-            && context.Response.ContentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+        var response = context.Response;
+        var encoding = response.Headers.ContentEncoding.ToString();
+        if (response.StatusCode != StatusCodes.Status200OK)
+        {
+            LogOnce("status:" + response.StatusCode, "ShareLinks: left index.html ({Path}) alone, it was answered with status {Status}.", request.Path.Value, response.StatusCode);
+        }
+        else if (response.ContentType is null || !response.ContentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+        {
+            LogOnce("type:" + response.ContentType, "ShareLinks: left index.html ({Path}) alone, it was served as {ContentType}.", request.Path.Value, response.ContentType ?? "no content type");
+        }
+        else if (!string.IsNullOrEmpty(encoding) && !encoding.Equals("identity", StringComparison.OrdinalIgnoreCase))
+        {
+            // Something further in compressed it anyway. Rewriting compressed bytes
+            // as text would break the page.
+            LogOnce("encoding:" + encoding, "ShareLinks: left index.html ({Path}) alone, it came back compressed ({Encoding}).", request.Path.Value, encoding);
+        }
+        else
         {
             bytes = AddScriptTag(context, bytes);
         }
@@ -89,32 +106,37 @@ public sealed class IndexHtmlScriptMiddleware
         try
         {
             var html = Encoding.UTF8.GetString(original);
-            if (html.Contains(ScriptMarker, StringComparison.OrdinalIgnoreCase))
+            if (IndexHtmlScript.IsPresent(html))
             {
-                // Already tagged, whether by this middleware, an older on-disk
-                // injection, or by hand. Leave it alone.
+                // Already tagged, whether by File Transformation, the file on disk,
+                // or by hand. Leave it alone.
+                LogOnce("present", "ShareLinks: index.html already loads the client script.");
                 return original;
             }
 
-            var bodyIndex = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-            html = bodyIndex >= 0 ? html.Insert(bodyIndex, Snippet) : html + Snippet;
-            var updated = Encoding.UTF8.GetBytes(html);
+            var updated = Encoding.UTF8.GetBytes(IndexHtmlScript.AddTo(html));
 
             context.Response.Headers.Remove(HeaderNames.ETag);
             context.Response.Headers.Remove(HeaderNames.LastModified);
             context.Response.ContentLength = updated.Length;
 
-            if (Interlocked.Exchange(ref _logged, 1) == 0)
-            {
-                _logger.LogInformation("ShareLinks: adding the client script to index.html as it is served.");
-            }
-
+            LogOnce("tagged", "ShareLinks: adding the client script to index.html as it is served.");
             return updated;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "ShareLinks: could not add the client script to index.html.");
             return original;
+        }
+    }
+
+    private void LogOnce(string key, string message, params object?[] args)
+    {
+        if (_logged.TryAdd(key, true))
+        {
+#pragma warning disable CA2254 // The templates are the constant strings above.
+            _logger.LogInformation(message, args);
+#pragma warning restore CA2254
         }
     }
 }

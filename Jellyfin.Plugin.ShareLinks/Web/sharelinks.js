@@ -107,6 +107,10 @@
             partyHostOnly: 'The host controls playback.',
             partyNotShared: 'The host is playing something that wasn\'t shared with you. You will join as soon as they switch.',
             partyEnded: 'This watch party has ended.',
+            unavailableTitle: 'This shared title can\'t be opened',
+            unavailableBody: 'The link may have ended, or the title changed on the server. Try again, or sign out to use Jellyfin normally.',
+            tryAgain: 'Try again',
+            signOut: 'Sign out',
             hour: 'hour', hours: 'hours', day: 'day', days: 'days'
         },
         fr: {
@@ -146,6 +150,10 @@
             partyHostOnly: 'L\'hôte contrôle la lecture.',
             partyNotShared: 'L\'hôte lit quelque chose qui ne vous a pas été partagé. Vous rejoindrez dès qu\'il changera.',
             partyEnded: 'Ce visionnage est terminé.',
+            unavailableTitle: 'Ce titre partagé ne peut pas être ouvert',
+            unavailableBody: 'Le lien a peut-être expiré, ou le titre a changé sur le serveur. Réessayez, ou déconnectez-vous pour utiliser Jellyfin normalement.',
+            tryAgain: 'Réessayer',
+            signOut: 'Se déconnecter',
             hour: 'heure', hours: 'heures', day: 'jour', days: 'jours'
         }
     };
@@ -390,13 +398,146 @@
             return;
         }
 
+        // Sending the guest to a title they cannot fetch leaves jellyfin-web's
+        // details page on its spinner for good, with every way out hidden. Find out
+        // first, and say so instead when it cannot be opened.
+        var reachable = allowedItemReachable(context.allowedItemId);
+        if (reachable === false) {
+            showSharedItemUnavailable(context.allowedItemId);
+            return;
+        }
+
         var verdict = await checkAllowedLocation(context.allowedItemId);
-        if (verdict === false) {
+        if (verdict === false && reachable === true) {
             navigateToItem(context.allowedItemId);
         }
         // verdict === true: allowed, do nothing.
-        // verdict === null: check still in flight or route is not item-scoped
-        // in a way we can verify yet; do nothing to avoid flicker.
+        // verdict === null, or reachable still unknown: a check is in flight and
+        // reruns this when it settles; do nothing to avoid flicker.
+    }
+
+    /**
+     * Whether the guest can fetch the shared item: true, false, or null while that is
+     * being asked. Shares the visibility cache with checkAllowedLocation().
+     */
+    function allowedItemReachable(allowedItemId) {
+        var id = String(allowedItemId).toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(itemVisibilityCache, id)) {
+            return itemVisibilityCache[id];
+        }
+
+        if (!itemVisibilityInFlight[id]) {
+            itemVisibilityInFlight[id] = fetchItemVisibility(id);
+        }
+
+        return null;
+    }
+
+    var loggedOnce = {};
+
+    /**
+     * Writes one line to the browser console, once per key, so the guest flow can be
+     * followed from a user's console log without flooding it on every DOM tick.
+     */
+    function logOnce(key, level, message, detail) {
+        if (loggedOnce[key]) {
+            return;
+        }
+
+        loggedOnce[key] = true;
+        try {
+            var write = (window.console && (console[level] || console.log)) || function () {};
+            write.call(console, '[ShareLinks] ' + message, detail === undefined ? '' : detail);
+        } catch (error) {
+            // Logging must never break the page.
+        }
+    }
+
+    function showSharedItemUnavailable(itemId) {
+        logOnce('unavailable:' + itemId, 'warn', 'The shared item cannot be opened by this guest; showing the way out instead of redirecting.', { itemId: itemId });
+        if (document.getElementById('ShareLinksUnavailable')) {
+            return;
+        }
+
+        var overlay = document.createElement('div');
+        overlay.id = 'ShareLinksUnavailable';
+        overlay.setAttribute('role', 'alertdialog');
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;'
+            + 'background:rgba(16,16,16,0.96);color:#fff;font-family:inherit;padding:16px;box-sizing:border-box;';
+
+        var panel = document.createElement('div');
+        panel.style.cssText = 'max-width:32rem;text-align:center;';
+
+        var title = document.createElement('h2');
+        title.textContent = t('unavailableTitle');
+        var body = document.createElement('p');
+        body.style.cssText = 'opacity:0.8;line-height:1.5;';
+        body.textContent = t('unavailableBody');
+
+        var actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:24px;';
+        actions.appendChild(overlayButton(t('tryAgain'), true, function () {
+            window.location.reload();
+        }));
+        actions.appendChild(overlayButton(t('signOut'), false, signOutGuest));
+
+        panel.appendChild(title);
+        panel.appendChild(body);
+        panel.appendChild(actions);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+    }
+
+    function overlayButton(label, primary, onClick) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.style.cssText = 'font:inherit;padding:10px 18px;border-radius:6px;cursor:pointer;'
+            + (primary ? 'background:#00a4dc;border:1px solid #00a4dc;color:#fff;' : 'background:transparent;border:1px solid #888;color:#fff;');
+        button.addEventListener('click', onClick);
+        return button;
+    }
+
+    /**
+     * Ends the guest's session and forgets its login in this browser, then opens the
+     * normal sign-in page. Only offered when the shared title cannot be opened, so
+     * nothing the guest could still watch is given up.
+     */
+    function signOutGuest() {
+        var serverId = '';
+        try {
+            serverId = (ApiClient.serverId && ApiClient.serverId()) || '';
+        } catch (error) {
+            serverId = '';
+        }
+
+        var forget = function () {
+            try {
+                var credentials = JSON.parse(localStorage.getItem('jellyfin_credentials') || 'null');
+                if (credentials && Array.isArray(credentials.Servers)) {
+                    credentials.Servers.forEach(function (server) {
+                        if (server && (!serverId || server.Id === serverId)) {
+                            delete server.AccessToken;
+                            delete server.UserId;
+                        }
+                    });
+                    localStorage.setItem('jellyfin_credentials', JSON.stringify(credentials));
+                }
+            } catch (error) {
+                // Storage blocked: the token is already dead on the server.
+            }
+
+            window.location.replace(window.location.pathname.replace(/[^/]*$/, ''));
+        };
+
+        Promise.resolve()
+            .then(function () {
+                return ApiClient.logout();
+            })
+            .catch(function () {
+                // Signing out of an ended session can fail; forget it either way.
+            })
+            .then(forget);
     }
 
     async function getGuestContext() {
@@ -414,6 +555,15 @@
             (username && username.indexOf(prefix) === 0)
             || !!(state && (state.IsGuest === true || state.isGuest === true || state.GuestUserId || state.guestUserId))
         );
+        if (locked) {
+            logOnce('guest:' + currentApiUserId(), state ? 'info' : 'warn', state ? 'Guest view.' : 'Guest view, but the server did not answer GuestState.', {
+                user: username,
+                shareId: state && (state.ShareId || state.shareId),
+                allowedItemId: extractAllowedItemId(state),
+                expiresAtUtc: state && (state.ExpiresAtUtc || state.expiresAtUtc),
+                route: location.hash
+            });
+        }
         return {
             locked: locked,
             allowedItemId: extractAllowedItemId(state) || sessionStorage.getItem(allowedItemStorageKey) || null,
@@ -1171,8 +1321,9 @@
                 itemVisibilityCache[id] = true;
                 return true;
             })
-            .catch(function () {
+            .catch(function (error) {
                 itemVisibilityCache[id] = false;
+                logOnce('hidden:' + id, 'info', 'Item is not visible to this guest.', { itemId: id, status: error && error.status });
                 return false;
             })
             .finally(function () {
@@ -1184,6 +1335,7 @@
     function navigateToItem(itemId) {
         var target = '#/details?id=' + encodeURIComponent(itemId);
         if (location.hash !== target) {
+            logOnce('redirect:' + location.hash, 'info', 'Sent the guest back to the shared item.', { from: location.hash, itemId: itemId });
             location.hash = target;
         }
     }

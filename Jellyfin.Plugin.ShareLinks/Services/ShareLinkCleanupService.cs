@@ -50,7 +50,7 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         foreach (var record in records)
         {
             var cleaned = await CleanupRecordInternalAsync(record, records, false, cancellationToken).ConfigureAwait(false);
-            await HealLiveTvTagAsync(cleaned, cancellationToken).ConfigureAwait(false);
+            await HealShareTagAsync(cleaned, cancellationToken).ConfigureAwait(false);
         }
 
         await EndFinishedWatchPartiesAsync(cancellationToken).ConfigureAwait(false);
@@ -124,14 +124,20 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
     }
 
     /// <summary>
-    /// Puts a Live TV share's tag back on its channel. A guide refresh replaces a
-    /// channel's tags with the ones the tuner reports, which would quietly lock the
-    /// guest out until they opened the link again.
+    /// Puts a live share's tag back when Jellyfin has dropped it. A guide refresh
+    /// replaces a channel's tags with the ones the tuner reports, and a metadata
+    /// refresh does the same to any other item whose NFO or metadata provider brings
+    /// tags of its own. Either way the guest stays signed in but can no longer open
+    /// what was shared, which in the web client is a details page that never loads.
     /// </summary>
-    public async Task HealLiveTvTagAsync(ShareLinkRecord record, CancellationToken cancellationToken)
+    /// <remarks>
+    /// Only the shared item itself is checked, so this stays cheap enough to run on
+    /// every guest page load. When its tag is gone the whole tree is tagged again,
+    /// held to what a regular creator can still open, as redemption does.
+    /// </remarks>
+    public async Task HealShareTagAsync(ShareLinkRecord record, CancellationToken cancellationToken)
     {
-        if (record.Kind != ShareKind.LiveTv
-            || string.IsNullOrWhiteSpace(record.AllowedTag)
+        if (string.IsNullOrWhiteSpace(record.AllowedTag)
             || record.ExpiresAtUtc <= DateTimeOffset.UtcNow
             || record.Status is not (ShareLinkStatus.Active or ShareLinkStatus.Redeemed))
         {
@@ -139,22 +145,45 @@ public sealed class ShareLinkCleanupService : IShareLinkCleanupService
         }
 
         var item = TryGetItem(record.ItemId);
-        if (item is null)
+        if (item is null || HasTag(item, record.AllowedTag!))
         {
             return;
         }
 
         try
         {
-            if (await _itemTagService.EnsureTagAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false))
+            if (record.Kind == ShareKind.LiveTv)
             {
+                await _itemTagService.EnsureTagAsync(item, record.AllowedTag!, cancellationToken).ConfigureAwait(false);
                 _logger.LogInformation("ShareLinks: put the share tag back on channel {ItemId} after a guide refresh.", item.Id);
+                return;
             }
+
+            var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+            if (ShareCreatorPolicy.Evaluate(config, record, _userManager, out var creator) == CreatorStanding.Revoked
+                || (creator is not null && !ShareCreatorPolicy.CanOpen(creator, item)))
+            {
+                // The share is over; the next redemption or cleanup pass ends it.
+                return;
+            }
+
+            Func<BaseItem, bool>? canInclude = creator is null ? null : candidate => ShareCreatorPolicy.CanOpen(creator, candidate);
+            await _itemTagService.EnsureTagTreeAsync(item, record.AllowedTag!, canInclude, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(
+                "ShareLinks: share {RecordId} had lost its tag on \"{ItemName}\" ({ItemId}), most likely to a metadata refresh, so its guest could not open it. Tagged it again.",
+                record.Id,
+                item.Name,
+                item.Id);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "ShareLinks: could not restore the share tag on channel {ItemId}.", item.Id);
+            _logger.LogWarning(ex, "ShareLinks: could not restore the tag of share {RecordId} on item {ItemId}.", record.Id, item.Id);
         }
+    }
+
+    private static bool HasTag(BaseItem item, string tag)
+    {
+        return item.Tags?.Any(existing => string.Equals(existing, tag, StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     /// <summary>Revokes a specific share link and immediately runs teardown.</summary>
