@@ -33,6 +33,12 @@ public sealed class ShareLinkRedemptionResult
 /// <summary>Handles public share-link redemption and the bootstrap HTML response.</summary>
 public sealed class ShareLinkRedemptionService
 {
+    /// <summary>
+    /// The query parameter the link's first page adds once the visitor may go on.
+    /// Without it, opening the link only shows that page; with it, the link is redeemed.
+    /// </summary>
+    public const string ContinueParameter = "go";
+
     private readonly ILibraryManager _libraryManager;
     private readonly ShareLinkStore _store;
     private readonly ShareTokenService _tokenService;
@@ -68,6 +74,28 @@ public sealed class ShareLinkRedemptionService
         _sessionManager = sessionManager;
         _userManager = userManager;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Whether a token names a link that is still worth trying to redeem. Reads only:
+    /// it is what answers the link's first page, which must not spend a one-use link
+    /// before the visitor has agreed to continue. Redemption checks everything again,
+    /// and ends a link this lets through when it has to.
+    /// </summary>
+    public async Task<bool> LooksRedeemableAsync(string rawToken, CancellationToken cancellationToken)
+    {
+        var tokenHash = await _tokenService.HashTokenAsync(rawToken, cancellationToken).ConfigureAwait(false);
+        if (tokenHash is null)
+        {
+            return false;
+        }
+
+        var record = await _store.GetByTokenHashAsync(tokenHash, cancellationToken).ConfigureAwait(false);
+        return record is not null
+            && record.ExpiresAtUtc > DateTimeOffset.UtcNow
+            && record.Status != ShareLinkStatus.Revoked
+            && record.Status != ShareLinkStatus.Failed
+            && !(record.OneUse && record.Status == ShareLinkStatus.Redeemed);
     }
 
     /// <summary>Redeems a token and returns the redemption result.</summary>
@@ -333,6 +361,114 @@ public sealed class ShareLinkRedemptionService
         return item is PhotoAlbum || item.GetType() == typeof(Folder)
             ? $"#/list?parentId={id}"
             : $"#/details?id={id}";
+    }
+
+    /// <summary>
+    /// The link's first page. Signing in as the guest replaces the login this browser
+    /// keeps for the server, so when that login is a real account still signed in,
+    /// the page says so and lets the visitor back out before anything is spent.
+    /// Otherwise it goes straight on to redemption.
+    /// </summary>
+    /// <remarks>
+    /// Nothing here touches the share: a one-use link stays unused until the visitor
+    /// continues. A preview bot that fetches the URL without running scripts never
+    /// gets past this page either. Every check fails open, as the link worked before.
+    /// </remarks>
+    public static string BuildCheckHtml(HttpRequest request)
+    {
+        var pathBase = request.PathBase.Value ?? string.Empty;
+        var homeUrlJson = JsonSerializer.Serialize($"{pathBase}/web/");
+        var infoUrlJson = JsonSerializer.Serialize($"{pathBase}/System/Info/Public");
+        var guestStateUrlJson = JsonSerializer.Serialize($"{pathBase}/ShareLinks/GuestState");
+        var meUrlJson = JsonSerializer.Serialize($"{pathBase}/Users/Me");
+        var continueParamJson = JsonSerializer.Serialize(ContinueParameter);
+
+        return $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Opening share link...</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111827; color: #e5e7eb; }
+    main { max-width: 36rem; padding: 2rem; }
+    .muted { color: #9ca3af; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+    button { font: inherit; padding: 0.6rem 1.1rem; border-radius: 0.4rem; border: 1px solid #4b5563; background: transparent; color: inherit; cursor: pointer; }
+    button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <div id="checking">Opening your link...</div>
+  <div id="warning" hidden>
+    <p>This browser is signed in to Jellyfin as <strong id="account"></strong>.</p>
+    <p class="muted">Continuing signs that account out here and switches this browser to a temporary guest account. To stay signed in, open the link in a private window instead.</p>
+    <div class="actions">
+      <button type="button" class="primary" id="continue">Continue as guest</button>
+      <button type="button" id="stay">Keep me signed in</button>
+    </div>
+  </div>
+</main>
+<script>
+(() => {
+  const next = new URL(window.location.href);
+  next.searchParams.set({{continueParamJson}}, "1");
+  const proceed = () => window.location.replace(next.toString());
+
+  const getJson = (url, headers) => {
+    const options = { credentials: "same-origin", headers: Object.assign({ "Accept": "application/json" }, headers || {}) };
+    if (window.AbortSignal && AbortSignal.timeout) {
+      options.signal = AbortSignal.timeout(5000);
+    }
+    return fetch(url, options).then((r) => (r.ok ? r.json() : null));
+  };
+
+  // The account this browser is signed in to on this server, when it is a real
+  // one whose login still works. Null for no login, a dead one, or another guest.
+  const signedInAccount = async () => {
+    const raw = localStorage.getItem("jellyfin_credentials");
+    if (!raw) {
+      return null;
+    }
+
+    const info = await getJson({{infoUrlJson}});
+    const servers = (JSON.parse(raw) || {}).Servers || [];
+    const server = info && servers.find((s) => s && s.Id === info.Id && s.AccessToken && s.UserId);
+    if (!server) {
+      return null;
+    }
+
+    const auth = { "Authorization": 'MediaBrowser Token="' + server.AccessToken + '"' };
+    const state = await getJson({{guestStateUrlJson}}, auth);
+    if (!state || (state.IsGuest ?? state.isGuest) !== false) {
+      return null;
+    }
+
+    const me = await getJson({{meUrlJson}}, auth);
+    const name = me && (me.Name ?? me.name);
+    return name ? String(name) : null;
+  };
+
+  signedInAccount().catch(() => null).then((name) => {
+    if (!name) {
+      proceed();
+      return;
+    }
+
+    document.getElementById("account").textContent = name;
+    document.getElementById("checking").hidden = true;
+    document.getElementById("warning").hidden = false;
+    document.getElementById("continue").addEventListener("click", proceed);
+    document.getElementById("stay").addEventListener("click", () => window.location.replace({{homeUrlJson}}));
+  });
+})();
+</script>
+</body>
+</html>
+""";
     }
 
     internal static string BuildBootstrapHtml(HttpRequest request, AuthenticationResult authResult, string landingRoute, string deviceId)

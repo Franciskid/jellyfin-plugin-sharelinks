@@ -63,6 +63,8 @@ sequenceDiagram
   P->>J: Tag the item and its children
   P-->>A: URL, copied to clipboard
   G->>P: GET /ShareLinks/Redeem?t=...
+  P-->>G: Check page: warns if this browser is signed in to a real account
+  G->>P: GET /ShareLinks/Redeem?t=...&go=1
   P->>P: Hash the token, look the record up
   P->>J: Create guest user, policy = allow that tag
   P->>J: AuthenticateDirect, mint a session
@@ -76,7 +78,9 @@ sequenceDiagram
    treats a parent's tags as belonging to all of its children, so tagging the series of a shared
    season would hand over every other season.
 3. **Redeem.** Opening the link creates a temporary guest account, applies the access restrictions,
-   and signs the visitor in. They go straight to the shared title.
+   and signs the visitor in. They go straight to the shared title. If the browser is already signed
+   in to a real account on the server, the link first asks before switching it to the guest; the
+   link stays unused if the visitor backs out.
 4. **Clean up.** Expiry or revocation disables and deletes the guest account, removes its registered
    devices, and removes the tag from the shared items. Cleanup also runs on a schedule and at
    startup, so expired links are handled if the server was off.
@@ -90,6 +94,7 @@ sequenceDiagram
 | Tags propagate down, never up | A bug fixed in 1.0.3: a shared season tagged its parent series, and Jellyfin's tag inheritance then exposed every other season of that series. |
 | Guest accounts use a dedicated authentication provider | Guests cannot sign in through the login page with a password. If the plugin is disabled, Jellyfin also refuses those sign-ins. |
 | The password is generated per redemption and thrown away | This prevents sign-in with a blank password. The browser receives only a session token. |
+| The link asks before replacing a real account's login | Jellyfin keeps one login per server in the browser, so the guest login replaces it. Testing your own link in your own browser would otherwise silently sign you out. The question comes before redemption, so backing out never spends a one-use link, and link previews that do not run scripts don't spend it either. |
 | Links are redeemed one request at a time | This prevents two simultaneous requests from both using the same single-use link. |
 | Each multi-use viewer receives its own device id | Jellyfin logs out any session with the same user and device id, so a shared device id would kick out the previous viewer on every new arrival. |
 | The guest session is minted as Jellyfin Web, with the device id the browser then uses | Jellyfin keys a session on app name plus device id. Any mismatch puts the guest's requests and WebSocket on two different sessions, and SyncPlay never tells the browser it joined. |
@@ -101,7 +106,7 @@ sequenceDiagram
 | Removing a tag searches the whole library for it | Items dropped from a collection or playlist after it was shared still carry the tag. The search finds them, even when the collection itself was deleted. |
 | Playlists get the guest added read only | Jellyfin decides who sees a playlist from its share list, not from tags. The guest is removed again on teardown. |
 | A guest asking for the album of a track they can play gets a stand-in | The web client fetches a track's album for its loudness gain before playing it, and stops if that fails. Tagging the album would hand over its other tracks, so the guest gets the album's id, name and gain only. |
-| Live TV share tags are put back | A guide refresh replaces a channel's tags with the tuner's. The cleanup pass and the guest's own page load put the share tag back. |
+| Share tags are put back when Jellyfin drops them | A guide refresh replaces a channel's tags with the tuner's, and a metadata refresh replaces any item's tags with its NFO's or provider's. The guest would stay signed in but be unable to open the title. The cleanup pass and the guest's own page load put the share tag back, and the server log says when it did. |
 
 ## What can be shared
 

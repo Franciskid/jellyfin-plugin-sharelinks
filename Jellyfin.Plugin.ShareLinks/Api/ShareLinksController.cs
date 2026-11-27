@@ -553,7 +553,7 @@ public sealed class ShareLinksController : ControllerBase
 
             if (match is not null)
             {
-                await _cleanupService.HealLiveTvTagAsync(match, cancellationToken).ConfigureAwait(false);
+                await _cleanupService.HealShareTagAsync(match, cancellationToken).ConfigureAwait(false);
                 return Ok(new ShareLinkGuestStateDto
                 {
                     IsGuest = true,
@@ -577,15 +577,30 @@ public sealed class ShareLinksController : ControllerBase
         });
     }
 
-    /// <summary>Redeems a share link token and returns the bootstrap login page.</summary>
+    /// <summary>
+    /// Opens a share link. The first visit only answers a page that checks whether this
+    /// browser is signed in to a real account and warns before replacing it; that page
+    /// comes back with the continue parameter, and only then is the link redeemed and
+    /// the bootstrap login page returned.
+    /// </summary>
     [HttpGet("Redeem")]
     [AllowAnonymous]
-    public async Task<ActionResult> Redeem([FromQuery(Name = "t")] string? token, CancellationToken cancellationToken)
+    public async Task<ActionResult> Redeem(
+        [FromQuery(Name = "t")] string? token,
+        [FromQuery(Name = ShareLinkRedemptionService.ContinueParameter)] string? go,
+        CancellationToken cancellationToken)
     {
         SetNoStoreHeaders();
         if (string.IsNullOrWhiteSpace(token))
         {
             return LinkUnavailablePage(Request);
+        }
+
+        if (go != "1")
+        {
+            return await _redemptionService.LooksRedeemableAsync(token, cancellationToken).ConfigureAwait(false)
+                ? Content(ShareLinkRedemptionService.BuildCheckHtml(Request), "text/html; charset=utf-8")
+                : LinkUnavailablePage(Request);
         }
 
         var result = await _redemptionService.RedeemAsync(token, Request, cancellationToken).ConfigureAwait(false);
