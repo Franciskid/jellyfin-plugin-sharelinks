@@ -185,6 +185,14 @@ https://raw.githubusercontent.com/Franciskid/jellyfin-plugin-sharelinks/main/man
 Install **ShareLinks**, then restart Jellyfin. Hard-refresh the web client once for the menu entry
 to appear.
 
+The web client needs the plugin's script to show the entry. ShareLinks adds it to `index.html`
+three ways: in the file on disk when it is writable, while Jellyfin serves the page, and through
+[File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation) when
+that plugin is installed. If the entry still doesn't show, look for `ShareLinks:` lines about
+`index.html` in the server log. They say which of these worked, and no line at all means
+something answered the page before ShareLinks could see it, in which case installing File
+Transformation usually fixes it.
+
 ## Configuration
 
 | Setting | Effect | Default |
